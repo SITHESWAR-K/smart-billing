@@ -1,0 +1,8 @@
+1. Register shop-  shopkeeper registers a Shop (shop name, shopkeeper name, location) after that it generate a unqiue shop_id for that shop.
+
+2. register shopkeeper - Main shopkeeper the should enter the shop id, shop name, their name and it have to set 4 digit pin for them and it store in. Database for that under their name.. 
+3. Login - the login should be based on role based (main /alternative)  enter the shop id , and select role and enter the pin . It must check the pin is theirs check with database. If yes, allow them to move the dashboard   to   their  selected role... other wise it ask retry..
+4. After login it must show the Daily code (like 36) it automatically change daily . It valid for 24 hours.. shopkeeper or alternative shopkeeper dashboards the code will display they need to say the code through voice it takes the pitch(frequency) and it temporary store.. everytime billing it must check 2 - pin verification+ pitch frequency . If it is match it allow billing..
+5. add products- it add the products that have the premisision only main shopkeeper acces they add the product and tell the item name, quantity, price - here use whisper large v3 for convert audio to text and then it transalated to english and store in database. here it must handle the synomnys (oru product ah dfferent name la sonalaum athu billing pannaum). oru shop eduthuda neriya brands la products erukum so product crt ah bill podanum. 
+6. price updates through voice in database daily price changing products
+7. generate bill .

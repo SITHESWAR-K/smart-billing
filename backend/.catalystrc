@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "18661000000143001",
+      "name": "smart-billing",
+      "domain": {
+        "id": "50040157221",
+        "name": "smart-billing-60043737846.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60043737846",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    }
+  ]
+}

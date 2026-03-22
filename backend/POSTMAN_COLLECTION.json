@@ -1,0 +1,222 @@
+{
+  "info": {
+    "name": "Smart Billing API",
+    "description": "API collection for Smart Billing Backend",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Server Health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/health",
+            "header": []
+          },
+          "response": []
+        },
+        {
+          "name": "Simple Health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health",
+            "header": []
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Shops",
+      "item": [
+        {
+          "name": "Create Shop",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shops",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_name\": \"My Store\",\n  \"shopkeeper_name\": \"John Doe\",\n  \"location\": \"123 Main Street\",\n  \"pin\": \"1234\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Shops",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/shops",
+            "header": []
+          },
+          "response": []
+        },
+        {
+          "name": "Get Shop by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/shops/{{shop_id}}",
+            "header": []
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "Create Product",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/products",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_id\": \"{{shop_id}}\",\n  \"name\": \"Milk\",\n  \"synonyms\": [\"dairy milk\", \"liquid milk\"],\n  \"quantity\": 100,\n  \"price\": 50,\n  \"brand\": \"Fresh Dairy\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Products by Shop",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/products/{{shop_id}}?limit=50&offset=0",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ]
+          },
+          "response": []
+        },
+        {
+          "name": "Update Product",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/products/{{shop_id}}/{{product_id}}",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Fresh Milk\",\n  \"price\": 55,\n  \"quantity\": 150\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Product",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/products/{{shop_id}}/{{product_id}}",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ]
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bills",
+      "item": [
+        {
+          "name": "Create Bill",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/bills",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_id\": \"{{shop_id}}\",\n  \"items\": [\n    {\n      \"name\": \"Milk\",\n      \"price\": 50,\n      \"quantity\": 2\n    },\n    {\n      \"name\": \"Bread\",\n      \"price\": 40,\n      \"quantity\": 1\n    }\n  ],\n  \"total\": 140,\n  \"created_by\": \"John Doe\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Bills by Shop",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/bills/{{shop_id}}?limit=50&offset=0",
+            "header": []
+          },
+          "response": []
+        },
+        {
+          "name": "Get Bill by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/bills/{{shop_id}}/{{bill_id}}",
+            "header": []
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "shop_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "product_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bill_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "smart-billing-api",
+  "type": "node",
+  "version": "18",
+  "port": 8080,
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "command": "npm start"
+}
