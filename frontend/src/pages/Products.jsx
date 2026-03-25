@@ -5,11 +5,98 @@ import Navbar from '../components/Navbar'
 import ProductCard from '../components/ProductCard'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
+import { useLanguage } from '../context/LanguageContext'
 import { SpeechRecognizer, parseProductFromSpeech, translateToEnglish, supportedLanguages } from '../utils/speechRecognition'
+
+const PRODUCT_KEYWORDS = [
+  'rice', 'sugar', 'milk', 'curd', 'yogurt', 'butter', 'ghee', 'oil', 'salt', 'tea', 'coffee',
+  'flour', 'atta', 'soap', 'shampoo', 'biscuit', 'noodles', 'detergent', 'masala', 'dal',
+  'toor', 'urad', 'chilli', 'turmeric', 'wheat', 'bread', 'eggs', 'juice'
+]
+
+const normalizeToken = (value) => value.toLowerCase().replace(/[^a-z0-9\s]/gi, '').trim()
+
+const toTitleCase = (value) => value
+  .split(' ')
+  .filter(Boolean)
+  .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+  .join(' ')
+
+const deriveBrandAndName = (rawName, spokenText, existingBrand) => {
+  const cleanedName = normalizeToken(rawName)
+  if (!cleanedName) {
+    return { productName: '', brandName: existingBrand || '' }
+  }
+
+  const explicitBrandMatch = spokenText.match(/\bbrand\s+(?:is\s+)?([a-z0-9\s]+)/i)
+  if (explicitBrandMatch && explicitBrandMatch[1]) {
+    return {
+      productName: toTitleCase(cleanedName),
+      brandName: toTitleCase(normalizeToken(explicitBrandMatch[1]))
+    }
+  }
+
+  const words = cleanedName.split(' ').filter(Boolean)
+  if (words.length < 2) {
+    return { productName: toTitleCase(cleanedName), brandName: existingBrand || '' }
+  }
+
+  const keywordIndex = words.findIndex(word => PRODUCT_KEYWORDS.includes(word))
+  if (keywordIndex > 0) {
+    return {
+      productName: toTitleCase(words.slice(keywordIndex).join(' ')),
+      brandName: toTitleCase(words.slice(0, keywordIndex).join(' '))
+    }
+  }
+
+  if (!existingBrand) {
+    return {
+      productName: toTitleCase(words.slice(1).join(' ')),
+      brandName: toTitleCase(words[0])
+    }
+  }
+
+  return { productName: toTitleCase(cleanedName), brandName: existingBrand }
+}
+
+const extractAlternativeNames = (spokenText, canonicalName) => {
+  const lowerText = spokenText.toLowerCase()
+  const hints = ['also called', 'aka', 'alias', 'alternative name', 'alternative names', 'called']
+  const hint = hints.find(value => lowerText.includes(value))
+
+  if (!hint) return []
+
+  const segment = lowerText.split(hint)[1] || ''
+  const canonical = normalizeToken(canonicalName)
+
+  return Array.from(new Set(
+    segment
+      .split(/,|\/|\bor\b|\band\b/gi)
+      .map(token => token.replace(/[^a-z0-9\s]/gi, '').trim())
+      .filter(token => token && token.length > 1 && token !== canonical)
+      .map(toTitleCase)
+  )).slice(0, 8)
+}
+
+const mergeSynonymText = (existingText, extraList) => {
+  const existingList = (existingText || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+
+  const merged = Array.from(new Set([...existingList, ...extraList]))
+  return merged.join(', ')
+}
+
+const splitProductSpeechChunks = (text = '') => text
+  .split(/,|\band\b|\bthen\b|\bnext\b|\balso\b/gi)
+  .map(part => part.trim())
+  .filter(Boolean)
 
 const Products = () => {
   const navigate = useNavigate()
   const { auth } = useAuth()
+  const { t } = useLanguage()
   const [products, setProducts] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
@@ -28,24 +115,11 @@ const Products = () => {
   const [interimTranscript, setInterimTranscript] = useState('')
   const [selectedLang, setSelectedLang] = useState('en-IN')
   const recognizerRef = useRef(null)
-
-  if (auth?.role !== 'main') {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <Navbar />
-        <div className="max-w-6xl mx-auto px-4 py-8">
-          <div className="bg-yellow-50 border-2 border-yellow-400 p-6 rounded-lg">
-            <h2 className="text-2xl font-bold text-yellow-800">Access Denied</h2>
-            <p className="text-yellow-700 mt-2">Only main shopkeepers can manage products.</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const listeningRef = useRef(false)
 
   useEffect(() => {
     fetchProducts()
-    
+
     // Cleanup speech recognition on unmount
     return () => {
       if (recognizerRef.current) {
@@ -72,12 +146,13 @@ const Products = () => {
     try {
       let silenceTimer = null;
       let lastTranscript = '';
-      
+
       const recognizer = new SpeechRecognizer({
         lang: selectedLang,
         continuous: true,
         interimResults: true,
         onStart: () => {
+          listeningRef.current = true
           setIsListening(true)
           setTranscript('')
           setInterimTranscript('')
@@ -85,13 +160,13 @@ const Products = () => {
         onResult: (result) => {
           // Clear existing silence timer
           if (silenceTimer) clearTimeout(silenceTimer);
-          
+
           if (result.isFinal) {
             const newTranscript = (transcript + ' ' + result.final).trim()
             setTranscript(newTranscript)
             setInterimTranscript('')
             lastTranscript = newTranscript
-            
+
             // Start silence detection - if no speech for 1.5 seconds, process it
             silenceTimer = setTimeout(async () => {
               if (lastTranscript && recognizerRef.current) {
@@ -109,16 +184,28 @@ const Products = () => {
           if (error === 'not-allowed') {
             setError('Microphone access denied. Please allow microphone access.')
           }
+          listeningRef.current = false
           setIsListening(false)
           if (silenceTimer) clearTimeout(silenceTimer)
         },
         onEnd: () => {
-          setIsListening(false)
           if (silenceTimer) clearTimeout(silenceTimer)
           // Process any remaining transcript
           if (lastTranscript) {
             processWithAI(lastTranscript)
             lastTranscript = ''
+          }
+
+          // Keep listening continuously until user stops manually.
+          if (listeningRef.current && recognizerRef.current) {
+            try {
+              recognizerRef.current.start()
+            } catch (e) {
+              listeningRef.current = false
+              setIsListening(false)
+            }
+          } else {
+            setIsListening(false)
           }
         }
       })
@@ -130,58 +217,69 @@ const Products = () => {
       setError('Speech recognition not supported. Please use Chrome or Edge browser.')
     }
   }
-  
-  const processWithAI = async (text) => {
+
+  const processChunkWithAI = async (text) => {
     if (!text || text.trim().length === 0) return
-    
+
     try {
-      // Try AI parsing first
       const response = await api.post('/ai-parse/product', { text })
       const parsed = response.data
-      
+
       console.log('AI parsed:', parsed)
-      
+
+      const { productName, brandName } = deriveBrandAndName(parsed.name || formData.name, text, formData.brand)
+      const altNames = extractAlternativeNames(text, productName)
+
       const newFormData = {
-        name: parsed.name || formData.name,
+        name: productName || formData.name,
         price: parsed.price ? parsed.price.toString() : formData.price,
         quantity: parsed.quantity ? parsed.quantity.toString() : formData.quantity,
-        brand: formData.brand,
-        synonyms: formData.synonyms
+        brand: brandName || formData.brand,
+        synonyms: mergeSynonymText(formData.synonyms, altNames)
       }
-      
+
       setFormData(newFormData)
-      
+
       // Auto-submit if we have name and price
       if (parsed.name && parsed.price) {
-        setTimeout(() => {
-          submitVoiceProduct(newFormData)
-        }, 300)
+        await submitVoiceProduct(newFormData)
       }
     } catch (error) {
       console.error('AI parsing failed, using fallback:', error)
-      // Fallback to original parsing
       fillFormFromSpeech(text)
+    }
+  }
+
+  const processWithAI = async (text) => {
+    if (!text || text.trim().length === 0) return
+
+    const chunks = splitProductSpeechChunks(text)
+    for (const chunk of chunks) {
+      await processChunkWithAI(chunk)
     }
   }
 
   const fillFormFromSpeech = (text) => {
     if (!text) return
-    
+
     const translated = translateToEnglish(text)
     const parsed = parseProductFromSpeech(translated)
-    
+
     console.log('Parsed from speech:', parsed) // Debug log
-    
+
+    const { productName, brandName } = deriveBrandAndName(parsed.name || formData.name, translated, formData.brand)
+    const altNames = extractAlternativeNames(translated, productName)
+
     const newFormData = {
-      name: parsed.name || formData.name,
+      name: productName || formData.name,
       price: parsed.price ? parsed.price.toString() : formData.price,
       quantity: parsed.quantity ? parsed.quantity.toString() : formData.quantity,
-      brand: formData.brand,
-      synonyms: formData.synonyms
+      brand: brandName || formData.brand,
+      synonyms: mergeSynonymText(formData.synonyms, altNames)
     }
-    
+
     setFormData(newFormData)
-    
+
     // Auto-submit if we have name and price
     if (parsed.name && parsed.price) {
       setTimeout(() => {
@@ -189,13 +287,13 @@ const Products = () => {
       }, 500)
     }
   }
-  
+
   const submitVoiceProduct = async (data) => {
     if (!data.name || !data.price) return
-    
+
     setLoading(true)
     setError('')
-    
+
     try {
       const submitData = {
         name: data.name,
@@ -205,17 +303,17 @@ const Products = () => {
         synonyms: data.synonyms ? data.synonyms.split(',').map(s => s.trim()) : [],
         shop_id: auth.shopId
       }
-      
+
       await api.post('/products', submitData)
-      
+
       // Clear form but DON'T close it, keep voice active
       setFormData({ name: '', brand: '', price: '', quantity: '', synonyms: '' })
       setTranscript('')
       setInterimTranscript('')
       fetchProducts()
-      
+
       // Show success message
-      setSuccessMsg(`✅ Added ${data.name}! Keep speaking for next product...`)
+      setSuccessMsg(`${t('added')} ${data.name}!`)
       setTimeout(() => setSuccessMsg(''), 3000)
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to save product')
@@ -225,10 +323,11 @@ const Products = () => {
   }
 
   const stopListening = () => {
+    listeningRef.current = false
     if (recognizerRef.current) {
       recognizerRef.current.stop()
       setIsListening(false)
-      
+
       // Parse the transcript and fill form
       const fullTranscript = (transcript + ' ' + interimTranscript).trim()
       if (fullTranscript) {
@@ -257,7 +356,7 @@ const Products = () => {
       } else {
         await api.post('/products', submitData)
       }
-      
+
       setFormData({ name: '', brand: '', price: '', quantity: '', synonyms: '' })
       setEditingProduct(null)
       setShowForm(false)
@@ -298,17 +397,31 @@ const Products = () => {
     setFormData({ name: '', brand: '', price: '', quantity: '', synonyms: '' })
   }
 
+  if (auth?.role !== 'main') {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navbar />
+        <div className="max-w-6xl mx-auto px-4 py-8">
+          <div className="bg-yellow-50 border-2 border-yellow-400 p-6 rounded-lg">
+            <h2 className="text-2xl font-bold text-yellow-800">Access Denied</h2>
+            <p className="text-yellow-700 mt-2">Only main shopkeepers can manage products.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-4xl font-bold text-gray-800">Manage Products</h1>
+          <h1 className="text-4xl font-bold text-gray-800">{t('manageProducts')}</h1>
           {!showForm && (
             <button
               onClick={() => setShowForm(true)}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold transition"
+              className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-lg font-semibold transition"
             >
               <Plus size={20} />
               Add Product
@@ -321,7 +434,7 @@ const Products = () => {
             {error}
           </div>
         )}
-        
+
         {successMsg && (
           <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg mb-6 animate-pulse">
             {successMsg}
@@ -340,15 +453,15 @@ const Products = () => {
             </div>
 
             {/* Voice Recording Section */}
-            <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 rounded-lg mb-6">
+            <div className="bg-gradient-to-r from-emerald-50 to-blue-50 p-6 rounded-lg mb-6">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold text-gray-800">🎤 Add Product by Voice (FREE)</h3>
+                <h3 className="text-lg font-semibold text-gray-800">Add Product by Voice</h3>
                 <div className="flex items-center gap-2">
                   <Globe size={16} className="text-gray-500" />
                   <select
                     value={selectedLang}
                     onChange={(e) => setSelectedLang(e.target.value)}
-                    className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500"
+                    className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500"
                   >
                     {supportedLanguages.map(lang => (
                       <option key={lang.code} value={lang.code}>{lang.name}</option>
@@ -359,13 +472,13 @@ const Products = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Say: "<strong>Rice 50 rupees</strong>" - pause 1.5s - "<strong>Sugar 80</strong>" - pause 1.5s - keeps adding!
               </p>
-              
+
               <div className="flex flex-wrap items-center gap-4">
                 {!isListening ? (
                   <button
                     type="button"
                     onClick={startListening}
-                    className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition"
+                    className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-lg transition"
                   >
                     <Mic size={20} />
                     Start Speaking
@@ -380,18 +493,18 @@ const Products = () => {
                     Stop Listening
                   </button>
                 )}
-                
+
                 {isListening && (
                   <span className="text-red-600 font-medium flex items-center gap-2">
                     <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
-                    Listening...
+                    {t('listening')}
                   </span>
                 )}
               </div>
 
               {/* Live transcript display */}
               {(transcript || interimTranscript) && (
-                <div className="mt-4 p-4 bg-white rounded-lg border border-indigo-200">
+                <div className="mt-4 p-4 bg-white rounded-lg border border-emerald-200">
                   <p className="text-sm text-gray-500 mb-1">You said:</p>
                   <p className="text-gray-800 font-medium">
                     {transcript}
@@ -411,7 +524,7 @@ const Products = () => {
                     value={formData.name}
                     onChange={handleChange}
                     required
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none"
                     placeholder="Product name"
                   />
                 </div>
@@ -423,7 +536,7 @@ const Products = () => {
                     name="brand"
                     value={formData.brand}
                     onChange={handleChange}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none"
                     placeholder="Brand name (optional)"
                   />
                 </div>
@@ -431,7 +544,7 @@ const Products = () => {
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-gray-700 font-semibold mb-2">Price (₹) *</label>
+                  <label className="block text-gray-700 font-semibold mb-2">Price (Rs.) *</label>
                   <input
                     type="number"
                     name="price"
@@ -439,7 +552,7 @@ const Products = () => {
                     onChange={handleChange}
                     step="0.01"
                     required
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none"
                     placeholder="0.00"
                   />
                 </div>
@@ -452,7 +565,7 @@ const Products = () => {
                     value={formData.quantity}
                     onChange={handleChange}
                     step="0.01"
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none"
                     placeholder="1"
                   />
                 </div>
@@ -465,7 +578,7 @@ const Products = () => {
                   name="synonyms"
                   value={formData.synonyms}
                   onChange={handleChange}
-                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none"
                   placeholder="e.g., curd, dahi, yogurt (comma separated)"
                 />
                 <p className="text-sm text-gray-500 mt-1">
@@ -477,7 +590,7 @@ const Products = () => {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg transition disabled:opacity-50"
+                  className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-lg transition disabled:opacity-50"
                 >
                   {loading ? 'Saving...' : editingProduct ? 'Update Product' : 'Add Product'}
                 </button>
@@ -486,7 +599,7 @@ const Products = () => {
                   onClick={handleCancel}
                   className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 rounded-lg transition"
                 >
-                  Cancel
+                  {t('cancel')}
                 </button>
               </div>
             </form>
@@ -495,7 +608,7 @@ const Products = () => {
 
         {products.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-gray-600 text-lg">No products yet. Add your first product!</p>
+            <p className="text-gray-600 text-lg">{t('noProducts')}</p>
           </div>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

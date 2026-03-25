@@ -107,24 +107,46 @@ router.post('/billing', async (req, res) => {
 
     const groq = getGroqClient();
 
-    const productList = availableProducts?.map(p => p.name).join(', ') || 'No products available';
+    const productContext = (availableProducts || [])
+      .map(product => {
+        const synonyms = Array.isArray(product.synonyms) ? product.synonyms.join(', ') : '';
+        return `name: ${product.name}; brand: ${product.brand || ''}; synonyms: ${synonyms}`;
+      })
+      .join('\n') || 'No products available';
 
     const completion = await groq.chat.completions.create({
       messages: [
         {
           role: 'system',
-          content: `You are a billing assistant. Match spoken product names to available products.
+          content: `You are a grocery billing speech parser.
 
-Available products: ${productList}
+Available products (canonical):
+${productContext}
 
 Rules:
-- Match spoken text to the closest product name
-- If quantity mentioned (kg, pieces, liters), extract it
-- Return product name EXACTLY as it appears in available products
-- Return ONLY valid JSON
+- Parse one or many line items from the speech text.
+- Match each spoken item to the closest canonical product name.
+- Consider brand and synonyms while matching.
+- If quantity is missing, default quantity = 1.
+- If item is clearly remove/delete command, return action as "remove" with that item.
+- Return product names EXACTLY as canonical names.
+- Return ONLY valid JSON.
 
-Output format:
-{"productName": "exact product name", "quantity": number}`
+Output JSON format:
+{
+  "items": [
+    { "productName": "exact canonical product name", "quantity": number }
+  ],
+  "action": "add"
+}
+
+For remove/delete intent:
+{
+  "items": [
+    { "productName": "exact canonical product name", "quantity": 1 }
+  ],
+  "action": "remove"
+}`
         },
         {
           role: 'user',
@@ -140,9 +162,18 @@ Output format:
     const responseText = completion.choices[0]?.message?.content;
     const parsed = JSON.parse(responseText);
 
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+        .filter(item => item && item.productName)
+        .map(item => ({
+          productName: item.productName,
+          quantity: Number(item.quantity) > 0 ? Number(item.quantity) : 1
+        }))
+      : [];
+
     res.json({
-      productName: parsed.productName || null,
-      quantity: parsed.quantity || 1,
+      items,
+      action: parsed.action === 'remove' ? 'remove' : 'add',
       confidence: 'high'
     });
   } catch (error) {

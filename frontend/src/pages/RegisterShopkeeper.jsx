@@ -1,17 +1,24 @@
 import { useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, User, Crown } from 'lucide-react'
 import api from '../api/api'
+import { useLanguage } from '../context/LanguageContext'
 import PinInput from '../components/PinInput'
+import LanguageToggle from '../components/LanguageToggle'
 
 const RegisterShopkeeper = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useLanguage()
+
+  // Check if main shopkeeper is adding an alternative (coming from dashboard)
+  const isFromDashboard = location.state?.fromDashboard === true
+
   const [formData, setFormData] = useState({
     shopId: location.state?.shopId || '',
     shopName: location.state?.shopName || '',
     name: '',
-    role: 'alternative'
+    role: isFromDashboard ? 'alternative' : 'alternative' // Force alternative when from dashboard
   })
   const [pin, setPin] = useState('')
   const [showPinInput, setShowPinInput] = useState(false)
@@ -47,7 +54,13 @@ const RegisterShopkeeper = () => {
       })
 
       localStorage.removeItem('tempShopData')
-      navigate('/login', { state: { shopId: formData.shopId } })
+
+      // If main shopkeeper added alternative, go back to dashboard with success message
+      if (isFromDashboard) {
+        navigate('/dashboard', { state: { successMessage: `Alternative shopkeeper "${formData.name}" added successfully!` } })
+      } else {
+        navigate('/login', { state: { shopId: formData.shopId } })
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to register shopkeeper')
     } finally {
@@ -56,93 +69,155 @@ const RegisterShopkeeper = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center px-4 py-8">
-      <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full">
-        <Link to="/" className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 mb-6">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-teal-50 flex items-center justify-center px-4 py-8">
+      {/* Language Toggle */}
+      <div className="absolute top-4 right-4 z-50">
+        <LanguageToggle />
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full border border-gray-100">
+        <Link to="/dashboard" className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-6">
           <ArrowLeft size={20} />
-          Back to Home
+          {t('back')}
         </Link>
 
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">Register Shopkeeper</h1>
-        <p className="text-gray-600 mb-6">Add yourself as a shopkeeper</p>
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('addAlternativeShopkeeper')}</h1>
+        <p className="text-gray-600 mb-6">{t('addAltShopkeeperDesc')}</p>
 
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
             {error}
           </div>
         )}
 
         {!showPinInput ? (
           <form onSubmit={(e) => { e.preventDefault(); setShowPinInput(true); }} className="space-y-4">
-            <div>
-              <label className="block text-gray-700 font-semibold mb-2">Shop ID</label>
-              <input
-                type="text"
-                name="shopId"
-                value={formData.shopId}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition"
-                placeholder="Enter your shop ID"
-              />
-            </div>
+            {/* Show shop info as read-only when main shopkeeper is adding alternative */}
+            {isFromDashboard ? (
+              <div className="bg-gray-50 p-4 rounded-xl border-2 border-gray-200 mb-4">
+                <p className="text-sm text-gray-600 mb-1">{t('shopId')}</p>
+                <p className="font-mono text-lg font-bold text-gray-800 tracking-widest">{formData.shopId}</p>
+                <p className="text-sm text-gray-600 mt-3 mb-1">{t('shopName')}</p>
+                <p className="font-bold text-gray-800">{formData.shopName}</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-2">{t('shopId')}</label>
+                  <input
+                    type="text"
+                    name="shopId"
+                    value={formData.shopId}
+                    onChange={(e) => handleChange({ target: { name: 'shopId', value: e.target.value.toUpperCase() } })}
+                    required
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg font-mono tracking-widest text-center bg-gray-50"
+                    placeholder="ABC123"
+                    maxLength={6}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-2">{t('shopName')}</label>
+                  <input
+                    type="text"
+                    name="shopName"
+                    value={formData.shopName}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg bg-gray-50"
+                    placeholder={t('shopNamePlaceholder')}
+                  />
+                </div>
+              </>
+            )}
 
             <div>
-              <label className="block text-gray-700 font-semibold mb-2">Shop Name</label>
-              <input
-                type="text"
-                name="shopName"
-                value={formData.shopName}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition"
-                placeholder="Your shop name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-gray-700 font-semibold mb-2">Your Name</label>
+              <label className="block text-gray-700 font-semibold mb-2">{t('yourName')}</label>
               <input
                 type="text"
                 name="name"
                 value={formData.name}
                 onChange={handleChange}
                 required
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition"
-                placeholder="Enter your name"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg bg-gray-50"
+                placeholder={t('yourNamePlaceholder')}
               />
             </div>
 
-            <div>
-              <label className="block text-gray-700 font-semibold mb-2">Role</label>
-              <select
-                name="role"
-                value={formData.role}
-                onChange={handleChange}
-                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition"
-              >
-                <option value="main">Main Shopkeeper</option>
-                <option value="alternative">Alternative Shopkeeper</option>
-              </select>
-            </div>
+            {/* Only show role selection when not coming from dashboard (i.e., standalone registration) */}
+            {!isFromDashboard && (
+              <div>
+                <label className="block text-gray-700 font-semibold mb-2">{t('roleLabel')}</label>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, role: 'main' }))}
+                    className={`w-full p-4 border-2 rounded-xl text-left transition ${
+                      formData.role === 'main'
+                        ? 'border-emerald-300 bg-emerald-50'
+                        : 'border-gray-200 hover:border-emerald-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Crown className={formData.role === 'main' ? 'text-emerald-600' : 'text-gray-400'} size={24} />
+                      <div>
+                        <p className={`font-bold ${formData.role === 'main' ? 'text-emerald-700' : 'text-gray-700'}`}>
+                          {t('mainShopkeeper')}
+                        </p>
+                        <p className="text-sm text-gray-600">{t('fullAccess')}</p>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, role: 'alternative' }))}
+                    className={`w-full p-4 border-2 rounded-xl text-left transition ${
+                      formData.role === 'alternative'
+                        ? 'border-blue-300 bg-blue-50'
+                        : 'border-gray-200 hover:border-blue-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <User className={formData.role === 'alternative' ? 'text-blue-600' : 'text-gray-400'} size={24} />
+                      <div>
+                        <p className={`font-bold ${formData.role === 'alternative' ? 'text-blue-700' : 'text-gray-700'}`}>
+                          {t('alternativeShopkeeper')}
+                        </p>
+                        <p className="text-sm text-gray-600">{t('billingAccessOnly')}</p>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 rounded-lg hover:shadow-lg transition disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-bold py-4 rounded-xl hover:shadow-lg transition disabled:opacity-50 text-lg mt-4"
             >
-              Next: Set PIN
+              {t('nextSetPin')} →
             </button>
           </form>
         ) : (
           <div>
-            <label className="block text-gray-700 font-semibold mb-4">Enter 4-Digit PIN</label>
-            <PinInput onComplete={handlePinComplete} error={error} />
+            <label className="block text-gray-700 font-semibold mb-4">{t('enterPin')}</label>
+            <PinInput onComplete={handlePinComplete} error={error} disabled={loading} />
+            {loading && (
+              <p className="text-center text-emerald-600 font-medium mt-4">Registering...</p>
+            )}
+            <button
+              onClick={() => setShowPinInput(false)}
+              className="w-full text-gray-600 hover:text-gray-800 py-2 mt-4"
+            >
+              ← {t('back')}
+            </button>
           </div>
         )}
 
         <p className="text-center text-gray-600 mt-6">
-          Already have an account? <Link to="/login" className="text-indigo-600 hover:text-indigo-700 font-semibold">Sign in</Link>
+          {t('alreadyHaveShop')} <Link to="/login" className="text-emerald-600 hover:text-emerald-700 font-semibold">{t('signIn')}</Link>
         </p>
       </div>
     </div>

@@ -1,13 +1,10 @@
 -- Supabase SQL Schema for Smart Billing
 -- Run this in Supabase SQL Editor
 
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- Shops table
 CREATE TABLE IF NOT EXISTS shops (
   id SERIAL PRIMARY KEY,
-  shop_id UUID DEFAULT uuid_generate_v4() UNIQUE NOT NULL,
+  shop_id TEXT UNIQUE NOT NULL CHECK (shop_id ~* '^[A-HJ-NP-Z2-9]{6}$'),
   shop_name TEXT NOT NULL,
   shopkeeper_name TEXT NOT NULL,
   location TEXT,
@@ -17,7 +14,7 @@ CREATE TABLE IF NOT EXISTS shops (
 -- Shopkeepers table
 CREATE TABLE IF NOT EXISTS shopkeepers (
   id SERIAL PRIMARY KEY,
-  shop_id UUID NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
+  shop_id TEXT NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   pin_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('main', 'alternative')),
@@ -28,7 +25,7 @@ CREATE TABLE IF NOT EXISTS shopkeepers (
 -- Daily codes table
 CREATE TABLE IF NOT EXISTS daily_codes (
   id SERIAL PRIMARY KEY,
-  shop_id UUID NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
+  shop_id TEXT NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   date DATE NOT NULL,
   expires_at TIMESTAMP WITH TIME ZONE,
@@ -38,7 +35,7 @@ CREATE TABLE IF NOT EXISTS daily_codes (
 -- Products table
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
-  shop_id UUID NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
+  shop_id TEXT NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   synonyms JSONB DEFAULT '[]',
   quantity DECIMAL,
@@ -51,7 +48,7 @@ CREATE TABLE IF NOT EXISTS products (
 -- Bills table
 CREATE TABLE IF NOT EXISTS bills (
   id SERIAL PRIMARY KEY,
-  shop_id UUID NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
+  shop_id TEXT NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
   items JSONB NOT NULL,
   total DECIMAL NOT NULL,
   created_by TEXT,

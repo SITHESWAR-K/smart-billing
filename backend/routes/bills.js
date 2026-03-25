@@ -1,104 +1,146 @@
 const express = require('express');
 const router = express.Router();
-const { getDatabase } = require('../database/db');
-const { authenticateToken } = require('../middleware/auth');
+const { getDatabase } = require('../database/supabase');
 
 /**
  * POST /api/bills
- * Create a new bill
  */
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { shop_id, items, total, created_by } = req.body;
 
-    if (!shop_id || !items || !total) {
-      return res.status(400).json({
-        error: 'Missing required fields: shop_id, items, total'
-      });
+    if (!shop_id || !Array.isArray(items) || items.length === 0 || total === undefined) {
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const db = getDatabase();
+    const supabase = getDatabase();
 
-    const result = db.prepare(`
-      INSERT INTO bills (shop_id, items, total, created_by)
-      VALUES (?, ?, ?, ?)
-    `).run(shop_id, JSON.stringify(items), total, created_by || req.user.name);
+    const productIds = items.map(item => item.productId).filter(Boolean);
+    if (productIds.length !== items.length) {
+      return res.status(400).json({ error: 'Each bill item must include productId' });
+    }
 
-    res.status(201).json({
-      message: 'Bill created successfully',
-      bill_id: result.lastInsertRowid
-    });
+    const { data: products, error: productsError } = await supabase
+      .from('products')
+      .select('id, name, quantity')
+      .eq('shop_id', shop_id)
+      .in('id', productIds);
+
+    if (productsError) throw productsError;
+
+    const productsById = new Map((products || []).map(product => [String(product.id), product]));
+    const lowStockAlerts = [];
+
+    for (const item of items) {
+      const product = productsById.get(String(item.productId));
+      const quantityToReduce = Number(item.quantity) || 1;
+
+      if (!product) {
+        return res.status(400).json({ error: `Product not found for productId: ${item.productId}` });
+      }
+
+      if (product.quantity !== null && product.quantity !== undefined) {
+        const currentQty = Number(product.quantity);
+        if (Number.isFinite(currentQty) && currentQty < quantityToReduce) {
+          return res.status(400).json({
+            error: `Insufficient stock for ${product.name}. Available: ${currentQty}, requested: ${quantityToReduce}`
+          });
+        }
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('bills')
+      .insert({
+        shop_id,
+        items,
+        total: parseFloat(total),
+        created_by: created_by || 'Unknown'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Best-effort stock updates after bill insert.
+    for (const item of items) {
+      const product = productsById.get(String(item.productId));
+      const quantityToReduce = Number(item.quantity) || 1;
+
+      if (product && product.quantity !== null && product.quantity !== undefined) {
+        const currentQty = Number(product.quantity);
+        const newQty = Number((currentQty - quantityToReduce).toFixed(2));
+
+        const { error: updateError } = await supabase
+          .from('products')
+          .update({ quantity: newQty, updated_at: new Date().toISOString() })
+          .eq('id', item.productId)
+          .eq('shop_id', shop_id);
+
+        if (updateError) throw updateError;
+
+        if (newQty <= 5) {
+          lowStockAlerts.push({
+            productId: product.id,
+            productName: product.name,
+            remainingQuantity: newQty
+          });
+        }
+      }
+    }
+
+    res.status(201).json({ message: 'Bill created successfully', bill: data, low_stock_alerts: lowStockAlerts });
   } catch (error) {
-    console.error('Error creating bill:', error);
-    res.status(500).json({
-      error: 'Failed to create bill',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to create bill', details: error.message });
   }
 });
 
 /**
  * GET /api/bills/:shop_id
- * Get bills for a shop
  */
-router.get('/:shop_id', (req, res) => {
+router.get('/:shop_id', async (req, res) => {
   try {
     const { shop_id } = req.params;
-    const { limit = 50, offset = 0 } = req.query;
+    const { limit = 50 } = req.query;
 
-    const db = getDatabase();
-    const bills = db.prepare(`
-      SELECT * FROM bills 
-      WHERE shop_id = ? 
-      ORDER BY created_at DESC 
-      LIMIT ? OFFSET ?
-    `).all(shop_id, parseInt(limit), parseInt(offset));
+    const supabase = getDatabase();
 
-    const countResult = db.prepare('SELECT COUNT(*) as count FROM bills WHERE shop_id = ?').get(shop_id);
+    const { data: bills, error } = await supabase
+      .from('bills')
+      .select('*')
+      .eq('shop_id', shop_id)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit));
 
-    res.json({
-      count: countResult.count,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      bills: bills.map(bill => ({
-        ...bill,
-        items: JSON.parse(bill.items)
-      }))
-    });
+    if (error) throw error;
+
+    res.json(bills || []);
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve bills',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to retrieve bills', details: error.message });
   }
 });
 
 /**
- * GET /api/bills/:shop_id/:bill_id
- * Get a specific bill
+ * GET /api/bills/single/:id
  */
-router.get('/:shop_id/:bill_id', (req, res) => {
+router.get('/single/:id', async (req, res) => {
   try {
-    const { shop_id, bill_id } = req.params;
-    const db = getDatabase();
+    const { id } = req.params;
+    const supabase = getDatabase();
 
-    const bill = db.prepare('SELECT * FROM bills WHERE id = ? AND shop_id = ?').get(bill_id, shop_id);
+    const { data: bill, error } = await supabase
+      .from('bills')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-    if (!bill) {
-      return res.status(404).json({
-        error: 'Bill not found'
-      });
+    if (error || !bill) {
+      return res.status(404).json({ error: 'Bill not found' });
     }
 
-    res.json({
-      ...bill,
-      items: JSON.parse(bill.items)
-    });
+    res.json(bill);
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve bill',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to retrieve bill', details: error.message });
   }
 });
 

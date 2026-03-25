@@ -3,11 +3,14 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Copy, Check } from 'lucide-react'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
+import { useLanguage } from '../context/LanguageContext'
 import PinInput from '../components/PinInput'
+import LanguageToggle from '../components/LanguageToggle'
 
 const RegisterShop = () => {
   const navigate = useNavigate()
   const { login } = useAuth()
+  const { t } = useLanguage()
   const [step, setStep] = useState('details') // details, pin, success
   const [formData, setFormData] = useState({
     shopName: '',
@@ -47,11 +50,11 @@ const RegisterShop = () => {
         location: formData.location,
         pin: enteredPin
       })
-      
+
       const { shop_id, token } = response.data
       setShopId(shop_id)
       setStep('success')
-      
+
       // Auto login the user
       login(shop_id, formData.shopName, formData.shopkeeperName, 'main', token)
     } catch (err) {
@@ -72,70 +75,75 @@ const RegisterShop = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center px-4 py-8">
-      <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-emerald-50 flex items-center justify-center px-4 py-8">
+      {/* Language Toggle */}
+      <div className="absolute top-4 right-4 z-50">
+        <LanguageToggle />
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full border border-gray-100">
         {step !== 'success' && (
-          <Link to="/" className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 mb-6">
+          <Link to="/" className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-6">
             <ArrowLeft size={20} />
-            Back to Home
+            {t('backToHome')}
           </Link>
         )}
 
         {step === 'details' && (
           <>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Register Your Shop</h1>
-            <p className="text-gray-600 mb-6">Create a new shop and become the main shopkeeper</p>
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('registerYourShop')}</h1>
+            <p className="text-gray-600 mb-6">{t('createNewShop')}</p>
 
             {error && (
-              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
                 {error}
               </div>
             )}
 
             <form onSubmit={handleDetailsSubmit} className="space-y-4">
               <div>
-                <label className="block text-gray-700 font-semibold mb-2">Shop Name *</label>
+                <label className="block text-gray-700 font-semibold mb-2">{t('shopName')} *</label>
                 <input
                   type="text"
                   name="shopName"
                   value={formData.shopName}
                   onChange={handleChange}
                   required
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-lg"
-                  placeholder="e.g., Kumar Grocery Store"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg bg-gray-50"
+                  placeholder={t('shopNamePlaceholder')}
                 />
               </div>
 
               <div>
-                <label className="block text-gray-700 font-semibold mb-2">Your Name *</label>
+                <label className="block text-gray-700 font-semibold mb-2">{t('yourName')} *</label>
                 <input
                   type="text"
                   name="shopkeeperName"
                   value={formData.shopkeeperName}
                   onChange={handleChange}
                   required
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-lg"
-                  placeholder="e.g., Ravi Kumar"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg bg-gray-50"
+                  placeholder={t('yourNamePlaceholder')}
                 />
               </div>
 
               <div>
-                <label className="block text-gray-700 font-semibold mb-2">Location</label>
+                <label className="block text-gray-700 font-semibold mb-2">{t('location')}</label>
                 <input
                   type="text"
                   name="location"
                   value={formData.location}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-lg"
-                  placeholder="e.g., Chennai, Tamil Nadu"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:outline-none transition text-lg bg-gray-50"
+                  placeholder={t('locationPlaceholder')}
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-4 rounded-lg hover:shadow-lg transition text-lg mt-6"
+                className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-bold py-4 rounded-xl hover:shadow-lg transition text-lg mt-6"
               >
-                Next: Set Your PIN →
+                {t('nextSetPin')} →
               </button>
             </form>
           </>
@@ -143,11 +151,11 @@ const RegisterShop = () => {
 
         {step === 'pin' && (
           <>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Set Your PIN</h1>
-            <p className="text-gray-600 mb-6">Create a 4-digit PIN for {formData.shopkeeperName}</p>
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('setYourPin')}</h1>
+            <p className="text-gray-600 mb-6">{t('createPinFor')} {formData.shopkeeperName}</p>
 
             {error && (
-              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
                 {error}
               </div>
             )}
@@ -157,60 +165,60 @@ const RegisterShop = () => {
             </div>
 
             {loading && (
-              <p className="text-center text-indigo-600 font-medium">Creating your shop...</p>
+              <p className="text-center text-emerald-600 font-medium">{t('creatingShop')}</p>
             )}
 
             <button
               onClick={() => setStep('details')}
               className="w-full text-gray-600 hover:text-gray-800 py-2 mt-4"
             >
-              ← Back to details
+              ← {t('backToDetails')}
             </button>
           </>
         )}
 
         {step === 'success' && (
           <div className="text-center">
-            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Check className="text-green-600" size={40} />
+            <div className="w-20 h-20 bg-gradient-to-br from-emerald-100 to-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Check className="text-emerald-600" size={40} />
             </div>
-            
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Shop Created! 🎉</h1>
-            <p className="text-gray-600 mb-6">Your shop is ready. Save your Shop ID:</p>
 
-            <div className="bg-gray-100 p-4 rounded-lg mb-6">
-              <p className="text-sm text-gray-600 mb-2">Your Shop ID</p>
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('shopCreated')}</h1>
+            <p className="text-gray-600 mb-6">{t('shopReady')}</p>
+
+            <div className="bg-gradient-to-r from-emerald-50 to-blue-50 p-6 rounded-xl mb-6 border border-emerald-100">
+              <p className="text-sm text-gray-600 mb-2">{t('yourShopId')}</p>
               <div className="flex items-center justify-center gap-2">
-                <code className="text-lg font-mono font-bold text-indigo-600 break-all">{shopId}</code>
+                <code className="text-3xl font-mono font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent tracking-widest">{shopId}</code>
                 <button
                   onClick={copyShopId}
-                  className="p-2 hover:bg-gray-200 rounded-lg transition"
+                  className="p-2 hover:bg-white rounded-lg transition"
                 >
-                  {copied ? <Check size={20} className="text-green-600" /> : <Copy size={20} />}
+                  {copied ? <Check size={20} className="text-emerald-600" /> : <Copy size={20} className="text-gray-500" />}
                 </button>
               </div>
-              {copied && <p className="text-green-600 text-sm mt-2">Copied!</p>}
+              {copied && <p className="text-emerald-600 text-sm mt-2">{t('copied')}</p>}
             </div>
 
-            <div className="bg-yellow-50 border border-yellow-300 p-4 rounded-lg mb-6 text-left">
-              <p className="text-yellow-800 font-semibold">⚠️ Important!</p>
-              <p className="text-yellow-700 text-sm mt-1">
-                Save this Shop ID! You'll need it to login and to add alternative shopkeepers.
+            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6 text-left">
+              <p className="text-blue-800 font-semibold">{t('important')}</p>
+              <p className="text-blue-700 text-sm mt-1">
+                {t('saveShopId')}
               </p>
             </div>
 
             <button
               onClick={goToDashboard}
-              className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white font-bold py-4 rounded-lg hover:shadow-lg transition text-lg"
+              className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-bold py-4 rounded-xl hover:shadow-lg transition text-lg"
             >
-              Go to Dashboard →
+              {t('goToDashboard')} →
             </button>
           </div>
         )}
 
         {step !== 'success' && (
           <p className="text-center text-gray-600 mt-6">
-            Already have a shop? <Link to="/login" className="text-indigo-600 hover:text-indigo-700 font-semibold">Sign in</Link>
+            {t('alreadyHaveShop')} <Link to="/login" className="text-emerald-600 hover:text-emerald-700 font-semibold">{t('signIn')}</Link>
           </p>
         )}
       </div>
