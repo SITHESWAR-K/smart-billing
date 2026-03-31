@@ -193,8 +193,8 @@ const Products = () => {
     const similarity = compareSignatures(storedSignature, currentSignature)
     console.log(`Products voice verification: similarity = ${similarity}`)
     
-    // With new Euclidean-based comparison, same speaker: 0.65-0.90, different: 0.30-0.60
-    const verified = similarity >= 0.70
+    // With stretched cosine comparison, same speaker: 0.55-1.0, different: 0.20-0.50
+    const verified = similarity >= 0.50
     setVoiceVerified(verified)
     lastVerificationRef.current = Date.now()
     

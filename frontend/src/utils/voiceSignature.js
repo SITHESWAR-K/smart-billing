@@ -139,8 +139,7 @@ export const extractVoiceSignature = async (durationMs = 3000, onProgress = () =
 }
 
 /**
- * Compare two voice signatures using multiple metrics for better accuracy
- * Uses Euclidean distance instead of cosine similarity for better discrimination
+ * Compare two voice signatures using cosine similarity with multiple features
  * @param {Object} signature1 - First voice signature (enrolled)
  * @param {Object} signature2 - Second voice signature (current)
  * @returns {number} Similarity score (0-1, higher is more similar)
@@ -155,43 +154,51 @@ export const compareSignatures = (signature1, signature2) => {
   const std1 = signature1.mfccStd || []
   const std2 = signature2.mfccStd || []
   
-  // 1. Euclidean distance for MFCC (more discriminative than cosine)
-  let mfccEuclidean = 0
+  // 1. Cosine similarity for MFCC
+  let dotProduct = 0, norm1 = 0, norm2 = 0
   for (let i = 0; i < Math.min(mfcc1.length, mfcc2.length); i++) {
-    mfccEuclidean += Math.pow(mfcc1[i] - mfcc2[i], 2)
+    dotProduct += mfcc1[i] * mfcc2[i]
+    norm1 += mfcc1[i] * mfcc1[i]
+    norm2 += mfcc2[i] * mfcc2[i]
   }
-  mfccEuclidean = Math.sqrt(mfccEuclidean)
-  // Normalize: smaller distance = higher similarity
-  // Typical MFCC distance between same speaker: 5-15, different speaker: 15-40+
-  const mfccSimilarity = Math.max(0, 1 - (mfccEuclidean / 30))
+  const mfccCosine = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2) || 1)
   
-  // 2. Compare standard deviations (voice dynamics)
-  let stdEuclidean = 0
+  // 2. Cosine similarity for standard deviations
+  let stdCosine = 1
   if (std1.length > 0 && std2.length > 0) {
+    let stdDot = 0, stdNorm1 = 0, stdNorm2 = 0
     for (let i = 0; i < Math.min(std1.length, std2.length); i++) {
-      stdEuclidean += Math.pow(std1[i] - std2[i], 2)
+      stdDot += std1[i] * std2[i]
+      stdNorm1 += std1[i] * std1[i]
+      stdNorm2 += std2[i] * std2[i]
     }
-    stdEuclidean = Math.sqrt(stdEuclidean)
+    stdCosine = stdDot / (Math.sqrt(stdNorm1) * Math.sqrt(stdNorm2) || 1)
   }
-  const stdSimilarity = Math.max(0, 1 - (stdEuclidean / 20))
   
-  // 3. Energy comparison (voice loudness pattern)
-  const energyRatio = Math.min(signature1.energy, signature2.energy) / 
-                      Math.max(signature1.energy, signature2.energy) || 0
+  // 3. Energy ratio (normalized difference)
+  const e1 = signature1.energy || 0.001
+  const e2 = signature2.energy || 0.001
+  const energyRatio = Math.min(e1, e2) / Math.max(e1, e2)
   
-  // 4. Pitch comparison (fundamental frequency)
-  const pitchDiff = Math.abs((signature1.pitch || 0) - (signature2.pitch || 0))
-  // Typical pitch difference: same speaker <200, different speaker 200-1000+
-  const pitchSimilarity = Math.max(0, 1 - (pitchDiff / 500))
+  // 4. Pitch similarity (normalized difference)
+  const p1 = signature1.pitch || 1
+  const p2 = signature2.pitch || 1
+  const pitchRatio = Math.min(p1, p2) / Math.max(p1, p2)
   
-  // Weighted combination - more weight on discriminative features
-  // MFCC Euclidean (40%) + Std deviation (25%) + Pitch (25%) + Energy (10%)
-  const combinedScore = (mfccSimilarity * 0.40) + 
-                        (stdSimilarity * 0.25) + 
-                        (pitchSimilarity * 0.25) + 
+  // Transform cosine similarities to be more discriminative
+  // Cosine is typically 0.95-1.0 for all voices, so we need to stretch the range
+  // Map 0.90-1.0 -> 0.0-1.0
+  const mfccScore = Math.max(0, (mfccCosine - 0.90) / 0.10)
+  const stdScore = Math.max(0, (stdCosine - 0.85) / 0.15)
+  
+  // Weighted combination
+  // MFCC (50%) + Std (20%) + Pitch (20%) + Energy (10%)
+  const combinedScore = (mfccScore * 0.50) + 
+                        (stdScore * 0.20) + 
+                        (pitchRatio * 0.20) + 
                         (energyRatio * 0.10)
   
-  console.log(`Voice comparison: mfcc=${mfccSimilarity.toFixed(2)}, std=${stdSimilarity.toFixed(2)}, pitch=${pitchSimilarity.toFixed(2)}, energy=${energyRatio.toFixed(2)}, combined=${combinedScore.toFixed(2)}`)
+  console.log(`Voice comparison: mfccCos=${mfccCosine.toFixed(3)}, stdCos=${stdCosine.toFixed(3)}, pitch=${pitchRatio.toFixed(2)}, energy=${energyRatio.toFixed(2)} => score=${combinedScore.toFixed(2)}`)
   
   return Math.round(combinedScore * 100) / 100
 }

@@ -437,10 +437,10 @@ const Billing = () => {
         const similarity = compareSignatures(storedSignature, currentSignature)
         console.log(`Voice verification: similarity = ${similarity}`)
         
-        // With the new Euclidean distance based comparison:
-        // Same speaker typically: 0.65-0.90
-        // Different speaker typically: 0.30-0.60
-        const verified = similarity >= 0.70
+        // With stretched cosine comparison:
+        // Same speaker typically: 0.55-1.0
+        // Different speaker typically: 0.20-0.50
+        const verified = similarity >= 0.50
         setVoiceVerified(verified)
         lastVerificationRef.current = Date.now()
         
