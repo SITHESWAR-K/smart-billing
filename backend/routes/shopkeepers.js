@@ -203,6 +203,182 @@ router.post('/save-pitch', async (req, res) => {
 });
 
 /**
+ * POST /api/shopkeepers/enroll-voice
+ * Store MFCC-based voice signature for shopkeeper
+ */
+router.post('/enroll-voice', async (req, res) => {
+  try {
+    const { shopkeeperId, voiceSignature } = req.body;
+
+    if (!shopkeeperId || !voiceSignature) {
+      return res.status(400).json({ error: 'Missing required fields: shopkeeperId, voiceSignature' });
+    }
+
+    // Validate signature structure
+    if (!voiceSignature.mfcc || !Array.isArray(voiceSignature.mfcc)) {
+      return res.status(400).json({ error: 'Invalid voice signature format' });
+    }
+
+    const supabase = getDatabase();
+
+    // Store voice signature with enrollment timestamp
+    const signatureData = {
+      ...voiceSignature,
+      enrolledAt: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+      .from('shopkeepers')
+      .update({ 
+        voice_signature: JSON.stringify(signatureData),
+        voice_enrolled_at: new Date().toISOString()
+      })
+      .eq('id', shopkeeperId);
+
+    if (error) throw error;
+
+    res.json({ 
+      message: 'Voice signature enrolled successfully',
+      enrolledAt: signatureData.enrolledAt
+    });
+  } catch (error) {
+    console.error('Voice enrollment error:', error);
+    res.status(500).json({ error: 'Failed to enroll voice signature', details: error.message });
+  }
+});
+
+/**
+ * POST /api/shopkeepers/verify-voice
+ * Verify current voice against stored MFCC signature
+ */
+router.post('/verify-voice', async (req, res) => {
+  try {
+    const { shopkeeperId, currentSignature } = req.body;
+
+    if (!shopkeeperId || !currentSignature) {
+      return res.status(400).json({ error: 'Missing required fields: shopkeeperId, currentSignature' });
+    }
+
+    const supabase = getDatabase();
+
+    const { data: shopkeeper, error } = await supabase
+      .from('shopkeepers')
+      .select('voice_signature, voice_enrolled_at, name')
+      .eq('id', shopkeeperId)
+      .single();
+
+    if (error || !shopkeeper) {
+      return res.status(404).json({ error: 'Shopkeeper not found' });
+    }
+
+    if (!shopkeeper.voice_signature) {
+      return res.status(400).json({ 
+        error: 'No voice signature enrolled',
+        needsEnrollment: true 
+      });
+    }
+
+    const storedSignature = JSON.parse(shopkeeper.voice_signature);
+
+    // Calculate MFCC similarity using cosine distance
+    const similarity = calculateMfccSimilarity(storedSignature.mfcc, currentSignature.mfcc);
+    
+    // Threshold for verification (0.60 = 60% similar - more lenient for real-world use)
+    const threshold = 0.60;
+    const verified = similarity >= threshold;
+
+    res.json({
+      verified,
+      similarity: Math.round(similarity * 100) / 100,
+      threshold,
+      confidence: similarity >= 0.80 ? 'high' : similarity >= 0.60 ? 'medium' : 'low',
+      shopkeeperName: shopkeeper.name
+    });
+  } catch (error) {
+    console.error('Voice verification error:', error);
+    res.status(500).json({ error: 'Failed to verify voice', details: error.message });
+  }
+});
+
+/**
+ * GET /api/shopkeepers/:id/voice-status
+ * Check if shopkeeper has voice enrolled
+ */
+router.get('/:id/voice-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const supabase = getDatabase();
+
+    const { data: shopkeeper, error } = await supabase
+      .from('shopkeepers')
+      .select('voice_signature, voice_enrolled_at')
+      .eq('id', id)
+      .single();
+
+    if (error || !shopkeeper) {
+      return res.status(404).json({ error: 'Shopkeeper not found' });
+    }
+
+    const hasVoiceEnrolled = !!shopkeeper.voice_signature;
+    
+    // Check if enrolled today
+    let enrolledToday = false;
+    if (shopkeeper.voice_enrolled_at) {
+      const enrolledDate = new Date(shopkeeper.voice_enrolled_at).toDateString();
+      const today = new Date().toDateString();
+      enrolledToday = enrolledDate === today;
+    }
+
+    // Parse and return the voice signature for client-side verification
+    let voiceSignature = null;
+    if (shopkeeper.voice_signature) {
+      try {
+        voiceSignature = JSON.parse(shopkeeper.voice_signature);
+      } catch (e) {
+        console.log('Failed to parse voice signature:', e);
+      }
+    }
+
+    res.json({
+      hasVoiceEnrolled,
+      enrolledToday,
+      enrolledAt: shopkeeper.voice_enrolled_at,
+      voiceSignature // Include for client-side comparison
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get voice status', details: error.message });
+  }
+});
+
+/**
+ * Calculate cosine similarity between two MFCC vectors
+ */
+function calculateMfccSimilarity(mfcc1, mfcc2) {
+  if (!mfcc1 || !mfcc2 || !Array.isArray(mfcc1) || !Array.isArray(mfcc2)) {
+    return 0;
+  }
+
+  let dotProduct = 0;
+  let norm1 = 0;
+  let norm2 = 0;
+
+  const len = Math.min(mfcc1.length, mfcc2.length);
+
+  for (let i = 0; i < len; i++) {
+    dotProduct += mfcc1[i] * mfcc2[i];
+    norm1 += mfcc1[i] * mfcc1[i];
+    norm2 += mfcc2[i] * mfcc2[i];
+  }
+
+  const denominator = Math.sqrt(norm1) * Math.sqrt(norm2);
+  
+  if (denominator === 0) return 0;
+  
+  return dotProduct / denominator;
+}
+
+/**
  * POST /api/shopkeepers/verify-pitch
  */
 router.post('/verify-pitch', async (req, res) => {

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, Mic, Square, Search, Volume2 } from 'lucide-react'
+import { Plus, Trash2, Mic, Square, Search, Volume2, ShieldCheck, ShieldX } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import BillItem from '../components/BillItem'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
 import { SpeechRecognizer, translateToEnglish } from '../utils/speechRecognition'
+import { getVoiceRecorder, compareSignatures } from '../utils/voiceSignature'
 
 const LOW_STOCK_THRESHOLD = 5
 
@@ -17,18 +18,23 @@ const normalizeVoiceText = (value = '') => value
   .trim()
 
 const NUMBER_WORDS = {
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  nine: 9,
-  ten: 10,
-  eleven: 11,
-  twelve: 12
+  // English
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  // Hindi
+  ek: 1, do: 2, teen: 3, char: 4, panch: 5,
+  chhe: 6, saat: 7, aath: 8, nau: 9, das: 10,
+  gyarah: 11, barah: 12, terah: 13, chaudah: 14, pandrah: 15,
+  bees: 20, tees: 30, chalis: 40, pachaas: 50,
+  // Tamil
+  onnu: 1, rendu: 2, moonu: 3, naalu: 4, anju: 5,
+  aaru: 6, yezhu: 7, yettu: 8, ombathu: 9, pathu: 10,
+  // Telugu
+  okati: 1, rendu: 2, moodu: 3, naalugu: 4, aidu: 5,
+  // Common variations
+  'double': 2, 'triple': 3, 'half': 0.5
 }
 
 const splitSpeechIntoChunks = (text = '') => text
@@ -71,6 +77,33 @@ const Billing = () => {
   const listeningRef = useRef(false)
   const billItemsRef = useRef([])
   const productsRef = useRef([])
+
+  // Voice verification states
+  const [voiceVerified, setVoiceVerified] = useState(null) // null = not checked, true/false = result
+  const [storedSignature, setStoredSignature] = useState(null)
+  const [verificationEnabled, setVerificationEnabled] = useState(false)
+  const lastVerificationRef = useRef(0)
+
+  useEffect(() => {
+    // Fetch stored voice signature for verification
+    const fetchVoiceSignature = async () => {
+      if (!auth?.shopkeeperId) return
+      
+      try {
+        const response = await api.get(`/shopkeepers/${auth.shopkeeperId}/voice-status`)
+        // Enable if voice signature exists (enrolled this session)
+        if (response.data.hasVoiceEnrolled && response.data.voiceSignature) {
+          setStoredSignature(response.data.voiceSignature)
+          setVerificationEnabled(true)
+          console.log('Voice verification enabled')
+        }
+      } catch (err) {
+        console.log('Voice verification not available:', err.message)
+      }
+    }
+    
+    fetchVoiceSignature()
+  }, [auth])
 
   useEffect(() => {
     fetchProducts()
@@ -183,23 +216,56 @@ const Billing = () => {
     return true
   }
 
-  // Extract quantity from speech
+  // Extract quantity from speech - improved patterns
   const extractQuantity = (text) => {
-    const lowerText = text.toLowerCase()
+    const lowerText = text.toLowerCase().trim()
 
-    const prefixedMatch = lowerText.match(/(?:add|put|take)?\s*(\d+)\s+[a-z]/i)
-    if (prefixedMatch) return parseInt(prefixedMatch[1], 10)
+    // Pattern 1: "2 rice", "3 milk" - number at start followed by product name
+    const startNumberMatch = lowerText.match(/^(\d+)\s+[a-z]/i)
+    if (startNumberMatch) return parseInt(startNumberMatch[1], 10)
 
-    const unitMatch = lowerText.match(/(\d+)\s*(?:x|kg|kilo|gram|packet|packets|piece|pieces|unit|units|bottle|box)/i)
+    // Pattern 2: "rice 2", "milk 3" - product name followed by number at end
+    const endNumberMatch = lowerText.match(/[a-z]\s+(\d+)$/i)
+    if (endNumberMatch) return parseInt(endNumberMatch[1], 10)
+
+    // Pattern 3: "add 2 rice", "put 5 milk" - command + number + product
+    const commandMatch = lowerText.match(/(?:add|put|take|give|get)\s+(\d+)\s+[a-z]/i)
+    if (commandMatch) return parseInt(commandMatch[1], 10)
+
+    // Pattern 4: "2x rice", "3x milk" - multiplier format
+    const multiplierMatch = lowerText.match(/(\d+)\s*[x×]\s*[a-z]/i)
+    if (multiplierMatch) return parseInt(multiplierMatch[1], 10)
+
+    // Pattern 5: "2 kg rice", "3 packets milk" - number with unit
+    const unitMatch = lowerText.match(/(\d+)\s*(?:x|kg|kgs|kilo|kilos|gram|grams|g|packet|packets|piece|pieces|pcs|unit|units|bottle|bottles|box|boxes|litre|litres|liter|liters|l)\b/i)
     if (unitMatch) return parseInt(unitMatch[1], 10)
 
+    // Pattern 6: Word numbers at start - "two rice", "three milk"
+    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
+      const wordStartRegex = new RegExp(`^${word}\\s+[a-z]`, 'i')
+      if (wordStartRegex.test(lowerText)) return num
+    }
+
+    // Pattern 7: Word numbers at end - "rice two", "milk three"
+    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
+      const wordEndRegex = new RegExp(`[a-z]\\s+${word}$`, 'i')
+      if (wordEndRegex.test(lowerText)) return num
+    }
+
+    // Pattern 8: Word numbers with commands - "add two rice", "do packet milk"
+    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
+      const wordCommandRegex = new RegExp(`(?:add|put|take|give|get)\\s+${word}\\s+[a-z]`, 'i')
+      if (wordCommandRegex.test(lowerText)) return num
+    }
+
+    // Pattern 9: Any number in the text (fallback)
+    const anyNumberMatch = lowerText.match(/\b(\d+)\b/)
+    if (anyNumberMatch) return parseInt(anyNumberMatch[1], 10)
+
+    // Pattern 10: Any word number in the text (fallback)
     for (const [word, num] of Object.entries(NUMBER_WORDS)) {
       if (new RegExp(`\\b${word}\\b`, 'i').test(lowerText)) return num
     }
-
-    // Try to find a number
-    const match = lowerText.match(/(\d+)/)
-    if (match) return parseInt(match[1], 10)
 
     return 1
   }
@@ -213,10 +279,17 @@ const Billing = () => {
     setTimeout(() => setLastAddedProduct(null), 2000)
   }
 
-  const startVoiceBilling = () => {
+  const startVoiceBilling = async () => {
     try {
       let silenceTimer = null;
       let lastSpokenText = '';
+
+      // Start continuous voice recording for verification
+      const voiceRecorder = getVoiceRecorder()
+      const recorderStarted = await voiceRecorder.start()
+      if (recorderStarted) {
+        console.log('Voice recorder started for verification')
+      }
 
       const recognizer = new SpeechRecognizer({
         lang: 'en-IN',
@@ -227,6 +300,8 @@ const Billing = () => {
           setIsListening(true)
           setVoiceStatus(t('listening'))
           setError('')
+          // Clear any previous voice data
+          voiceRecorder.clear()
         },
         onResult: (result) => {
           // Clear existing timer
@@ -242,6 +317,8 @@ const Billing = () => {
               if (lastSpokenText) {
                 await processVoiceBilling(lastSpokenText)
                 lastSpokenText = ''
+                // Clear voice data for next command
+                voiceRecorder.clear()
               }
             }, 1000) // 1 second pause for billing
           }
@@ -350,6 +427,43 @@ const Billing = () => {
     const chunks = splitSpeechIntoChunks(spokenText)
     if (chunks.length === 0) return
 
+    // Voice verification using ALREADY CAPTURED audio
+    if (verificationEnabled && auth?.shopkeeperId && storedSignature) {
+      const voiceRecorder = getVoiceRecorder()
+      const currentSignature = voiceRecorder.getSignature()
+      
+      if (currentSignature) {
+        // Compare locally first for speed
+        const similarity = compareSignatures(storedSignature, currentSignature)
+        console.log(`Voice verification: similarity = ${similarity}`)
+        
+        // With the new Euclidean distance based comparison:
+        // Same speaker typically: 0.65-0.90
+        // Different speaker typically: 0.30-0.60
+        const verified = similarity >= 0.70
+        setVoiceVerified(verified)
+        lastVerificationRef.current = Date.now()
+        
+        if (!verified) {
+          setVoiceStatus(`🚫 Voice not recognized (${Math.round(similarity * 100)}% match) - only shopkeeper can add items`)
+          setError('Voice verification failed. This doesn\'t sound like the enrolled shopkeeper.')
+          return // BLOCK - Don't process if voice doesn't match
+        }
+        
+        setVoiceStatus(`✓ Voice verified (${Math.round(similarity * 100)}%) - processing...`)
+      } else {
+        // No voice captured - might be too quiet
+        console.log('No voice signature captured - voice too quiet?')
+        setVoiceStatus('⚠️ Voice too quiet - speak louder')
+        // Still allow if we previously verified (within time window)
+        const now = Date.now()
+        if (voiceVerified !== true || now - lastVerificationRef.current > 30000) {
+          setError('Please speak louder for voice verification')
+          return // BLOCK
+        }
+      }
+    }
+
     const statuses = []
     for (const chunk of chunks) {
       const result = await processSingleVoiceSegment(chunk)
@@ -367,6 +481,10 @@ const Billing = () => {
       recognizerRef.current.abort()
       recognizerRef.current = null
     }
+    // Stop the voice recorder
+    const voiceRecorder = getVoiceRecorder()
+    voiceRecorder.stop()
+    
     setIsListening(false)
     setVoiceStatus('')
   }
@@ -466,6 +584,22 @@ const Billing = () => {
               <p className="font-semibold text-emerald-800">{voiceStatus || t('listening')}</p>
               <p className="text-sm text-emerald-600">{t('sayProductNames')}</p>
             </div>
+            {/* Voice verification indicator */}
+            {verificationEnabled && (
+              <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
+                voiceVerified === true ? 'bg-green-100 text-green-700' :
+                voiceVerified === false ? 'bg-red-100 text-red-700' :
+                'bg-gray-100 text-gray-600'
+              }`}>
+                {voiceVerified === true ? (
+                  <><ShieldCheck size={16} /> Voice verified</>
+                ) : voiceVerified === false ? (
+                  <><ShieldX size={16} /> Unknown voice</>
+                ) : (
+                  <><ShieldCheck size={16} /> Verifying...</>
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, X, Mic, Square, Globe } from 'lucide-react'
+import { Plus, X, Mic, Square, Globe, ShieldCheck, ShieldX } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import ProductCard from '../components/ProductCard'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
 import { SpeechRecognizer, parseProductFromSpeech, translateToEnglish, supportedLanguages } from '../utils/speechRecognition'
+import { getVoiceRecorder, compareSignatures } from '../utils/voiceSignature'
 
 const PRODUCT_KEYWORDS = [
   'rice', 'sugar', 'milk', 'curd', 'yogurt', 'butter', 'ghee', 'oil', 'salt', 'tea', 'coffee',
@@ -117,6 +118,11 @@ const Products = () => {
   const recognizerRef = useRef(null)
   const listeningRef = useRef(false)
 
+  // Voice verification states
+  const [voiceVerified, setVoiceVerified] = useState(null)
+  const [verificationEnabled, setVerificationEnabled] = useState(false)
+  const lastVerificationRef = useRef(0)
+
   useEffect(() => {
     fetchProducts()
 
@@ -127,6 +133,30 @@ const Products = () => {
       }
     }
   }, [])
+
+  // Voice verification state
+  const [storedSignature, setStoredSignature] = useState(null)
+  
+  // Check if voice verification is enabled
+  useEffect(() => {
+    const checkVoiceStatus = async () => {
+      if (!auth?.shopkeeperId) return
+      
+      try {
+        const response = await api.get(`/shopkeepers/${auth.shopkeeperId}/voice-status`)
+        // Enable if voice signature exists (enrolled this session)
+        if (response.data.hasVoiceEnrolled && response.data.voiceSignature) {
+          setStoredSignature(response.data.voiceSignature)
+          setVerificationEnabled(true)
+          console.log('Products: Voice verification enabled')
+        }
+      } catch (err) {
+        console.log('Voice verification not available')
+      }
+    }
+    
+    checkVoiceStatus()
+  }, [auth])
 
   const fetchProducts = async () => {
     try {
@@ -142,10 +172,49 @@ const Products = () => {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const startListening = () => {
+  // Verify voice using continuously captured audio
+  const verifyVoiceBeforeAction = () => {
+    if (!verificationEnabled || !auth?.shopkeeperId || !storedSignature) return true
+    
+    const voiceRecorder = getVoiceRecorder()
+    const currentSignature = voiceRecorder.getSignature()
+    
+    if (!currentSignature) {
+      console.log('No voice captured for verification')
+      // If no voice captured, check if we have recent verification
+      const now = Date.now()
+      if (voiceVerified === true && now - lastVerificationRef.current < 30000) {
+        return true
+      }
+      setError('Please speak louder for voice verification')
+      return false
+    }
+    
+    const similarity = compareSignatures(storedSignature, currentSignature)
+    console.log(`Products voice verification: similarity = ${similarity}`)
+    
+    // With new Euclidean-based comparison, same speaker: 0.65-0.90, different: 0.30-0.60
+    const verified = similarity >= 0.70
+    setVoiceVerified(verified)
+    lastVerificationRef.current = Date.now()
+    
+    if (!verified) {
+      setError(`Voice not recognized (${Math.round(similarity * 100)}% match). Only the enrolled shopkeeper can use voice commands.`)
+      return false
+    }
+    
+    return true
+  }
+
+  const startListening = async () => {
     try {
       let silenceTimer = null;
       let lastTranscript = '';
+
+      // Start continuous voice recording for verification
+      const voiceRecorder = getVoiceRecorder()
+      await voiceRecorder.start()
+      console.log('Products: Voice recorder started')
 
       const recognizer = new SpeechRecognizer({
         lang: selectedLang,
@@ -156,6 +225,7 @@ const Products = () => {
           setIsListening(true)
           setTranscript('')
           setInterimTranscript('')
+          voiceRecorder.clear() // Clear previous voice data
         },
         onResult: (result) => {
           // Clear existing silence timer
@@ -173,6 +243,7 @@ const Products = () => {
                 await processWithAI(lastTranscript)
                 setTranscript('')
                 lastTranscript = ''
+                voiceRecorder.clear() // Clear for next command
               }
             }, 1500) // 1.5 second pause detection
           } else {
@@ -218,8 +289,87 @@ const Products = () => {
     }
   }
 
+  // Check if text is a price update command
+  const isPriceUpdateCommand = (text) => {
+    const lowerText = text.toLowerCase()
+    const updatePatterns = [
+      /\b(update|change|set|modify)\s+\w+\s+price/i,
+      /\b\w+\s+price\s+\d+/i,
+      /\b\w+\s+price\s+(to|is|now)\s+\d+/i,
+      /\bprice\s+(of|for)\s+\w+/i,
+      /\b\w+\s+ka\s+price/i, // Hindi: "rice ka price"
+      /\b\w+\s+\d+\s*rupees?\b/i
+    ]
+    return updatePatterns.some(pattern => pattern.test(lowerText))
+  }
+
+  // Handle voice price update
+  const handleVoicePriceUpdate = async (text) => {
+    try {
+      const response = await api.post('/ai-parse/update-price', {
+        text,
+        availableProducts: products.map(p => ({
+          name: p.name,
+          id: p.id,
+          brand: p.brand,
+          price: p.price,
+          synonyms: p.synonyms
+        }))
+      })
+
+      const { isUpdate, productName, newPrice } = response.data
+
+      if (!isUpdate || !productName || newPrice === null) {
+        return false
+      }
+
+      // Find the product
+      const product = products.find(p => 
+        p.name.toLowerCase() === productName.toLowerCase() ||
+        (p.brand && `${p.brand} ${p.name}`.toLowerCase() === productName.toLowerCase())
+      )
+
+      if (!product) {
+        setError(`Product "${productName}" not found`)
+        return false
+      }
+
+      // Update the product price
+      const updateData = {
+        name: product.name,
+        price: newPrice,
+        quantity: product.quantity,
+        brand: product.brand,
+        synonyms: product.synonyms
+      }
+
+      await api.put(`/products/${auth.shopId}/${product.id}`, updateData)
+      fetchProducts()
+      
+      setSuccessMsg(`✓ Updated ${product.name} price to ₹${newPrice}`)
+      setTimeout(() => setSuccessMsg(''), 3000)
+      return true
+    } catch (error) {
+      console.error('Price update failed:', error)
+      return false
+    }
+  }
+
   const processChunkWithAI = async (text) => {
     if (!text || text.trim().length === 0) return
+
+    // Voice verification before processing
+    const verified = await verifyVoiceBeforeAction()
+    if (!verified) {
+      setError('⚠️ Voice not recognized - command ignored. Please try again.')
+      return
+    }
+
+    // First check if this is a price update command
+    if (isPriceUpdateCommand(text)) {
+      const updated = await handleVoicePriceUpdate(text)
+      if (updated) return
+    }
 
     try {
       const response = await api.post('/ai-parse/product', { text })
@@ -252,6 +402,12 @@ const Products = () => {
 
   const processWithAI = async (text) => {
     if (!text || text.trim().length === 0) return
+
+    // Verify voice before processing
+    if (!verifyVoiceBeforeAction()) {
+      console.log('Voice verification failed - blocking command')
+      return
+    }
 
     const chunks = splitProductSpeechChunks(text)
     for (const chunk of chunks) {
@@ -327,6 +483,10 @@ const Products = () => {
     if (recognizerRef.current) {
       recognizerRef.current.stop()
       setIsListening(false)
+
+      // Stop the voice recorder
+      const voiceRecorder = getVoiceRecorder()
+      voiceRecorder.stop()
 
       // Parse the transcript and fill form
       const fullTranscript = (transcript + ' ' + interimTranscript).trim()
@@ -498,6 +658,23 @@ const Products = () => {
                   <span className="text-red-600 font-medium flex items-center gap-2">
                     <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
                     {t('listening')}
+                  </span>
+                )}
+
+                {/* Voice verification indicator */}
+                {isListening && verificationEnabled && (
+                  <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm ${
+                    voiceVerified === true ? 'bg-green-100 text-green-700' :
+                    voiceVerified === false ? 'bg-red-100 text-red-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>
+                    {voiceVerified === true ? (
+                      <><ShieldCheck size={14} /> Verified</>
+                    ) : voiceVerified === false ? (
+                      <><ShieldX size={14} /> Unknown</>
+                    ) : (
+                      <><ShieldCheck size={14} /> Checking...</>
+                    )}
                   </span>
                 )}
               </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Store, User, Crown } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -6,12 +6,13 @@ import { useLanguage } from '../context/LanguageContext'
 import api from '../api/api'
 import PinInput from '../components/PinInput'
 import LanguageToggle from '../components/LanguageToggle'
+import VoiceEnrollment from '../components/VoiceEnrollment'
 
 const Login = () => {
   const navigate = useNavigate()
   const { login } = useAuth()
   const { t } = useLanguage()
-  const [step, setStep] = useState('shopId') // shopId, role, selectName, pin
+  const [step, setStep] = useState('shopId') // shopId, role, selectName, pin, voiceEnroll
   const [shopId, setShopId] = useState('')
   const [shopInfo, setShopInfo] = useState(null)
   const [role, setRole] = useState('main')
@@ -19,6 +20,8 @@ const Login = () => {
   const [alternativeShopkeepers, setAlternativeShopkeepers] = useState([]) // For multiple alternatives
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [dailyCode, setDailyCode] = useState('')
+  const [pendingLoginData, setPendingLoginData] = useState(null) // Store login data during voice enrollment
 
   const handleShopIdSubmit = async (e) => {
     e.preventDefault()
@@ -84,13 +87,80 @@ const Login = () => {
       })
 
       const { token, shop } = response.data
-      login(shopId, shop.name, shopkeeperInfo.name, role, token)
-      navigate('/dashboard')
+      
+      // Store login data for after voice enrollment
+      const loginData = { 
+        shopId, 
+        shopName: shop.name, 
+        shopkeeperName: shopkeeperInfo.name, 
+        role, 
+        token,
+        shopkeeperId: shopkeeperInfo.id 
+      }
+      
+      // Always require voice enrollment on every login for security
+      try {
+        const codeResponse = await api.get(`/daily-codes/${shopId}`)
+        setDailyCode(codeResponse.data.code)
+        setPendingLoginData(loginData)
+        setStep('voiceEnroll')
+      } catch (codeErr) {
+        // If daily code fetch fails, still proceed with enrollment using a generated code
+        setDailyCode(Math.random().toString(36).substring(2, 8).toUpperCase())
+        setPendingLoginData(loginData)
+        setStep('voiceEnroll')
+      }
     } catch (err) {
       setError(t('wrongPin'))
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleVoiceEnrollmentComplete = async (voiceSignature) => {
+    try {
+      // Save voice signature to backend
+      await api.post('/shopkeepers/enroll-voice', {
+        shopkeeperId: pendingLoginData.shopkeeperId,
+        voiceSignature
+      })
+      
+      // Complete login
+      login(
+        pendingLoginData.shopId, 
+        pendingLoginData.shopName, 
+        pendingLoginData.shopkeeperName, 
+        pendingLoginData.role, 
+        pendingLoginData.token,
+        pendingLoginData.shopkeeperId
+      )
+      navigate('/dashboard')
+    } catch (err) {
+      console.error('Voice enrollment save failed:', err)
+      // Still proceed with login even if save fails
+      login(
+        pendingLoginData.shopId, 
+        pendingLoginData.shopName, 
+        pendingLoginData.shopkeeperName, 
+        pendingLoginData.role, 
+        pendingLoginData.token,
+        pendingLoginData.shopkeeperId
+      )
+      navigate('/dashboard')
+    }
+  }
+
+  const handleVoiceEnrollmentSkip = () => {
+    // Proceed without voice enrollment
+    login(
+      pendingLoginData.shopId, 
+      pendingLoginData.shopName, 
+      pendingLoginData.shopkeeperName, 
+      pendingLoginData.role, 
+      pendingLoginData.token,
+      pendingLoginData.shopkeeperId
+    )
+    navigate('/dashboard')
   }
 
   return (
@@ -296,6 +366,15 @@ const Login = () => {
           {t('newHere')} <Link to="/register-shop" className="text-emerald-600 hover:text-emerald-700 font-semibold">{t('registerAShop')}</Link>
         </p>
       </div>
+
+      {/* Voice Enrollment Modal */}
+      {step === 'voiceEnroll' && (
+        <VoiceEnrollment
+          dailyCode={dailyCode}
+          onEnrollmentComplete={handleVoiceEnrollmentComplete}
+          onSkip={handleVoiceEnrollmentSkip}
+        />
+      )}
     </div>
   )
 }

@@ -16,8 +16,17 @@ export const AuthProvider = ({ children }) => {
     }
   }, [auth])
 
-  const login = (shopId, shopName, name, role, token) => {
-    const authData = { shopId, shopName, name, role, token, loginTime: new Date() }
+  const login = (shopId, shopName, name, role, token, shopkeeperId = null) => {
+    const authData = { 
+      shopId, 
+      shopName, 
+      name, 
+      role, 
+      token, 
+      shopkeeperId,
+      loginTime: new Date().toISOString(),
+      loginDate: new Date().toDateString()
+    }
     setAuth(authData)
     return authData
   }
@@ -30,8 +39,14 @@ export const AuthProvider = ({ children }) => {
     setAuth(prev => ({ ...prev, ...data }))
   }
 
+  // Check if voice was enrolled today
+  const isVoiceEnrolledToday = () => {
+    if (!auth?.loginDate) return false
+    return auth.loginDate === new Date().toDateString()
+  }
+
   return (
-    <AuthContext.Provider value={{ auth, login, logout, updateAuth }}>
+    <AuthContext.Provider value={{ auth, login, logout, updateAuth, isVoiceEnrolledToday }}>
       {children}
     </AuthContext.Provider>
   )

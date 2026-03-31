@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS shopkeepers (
   pin_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('main', 'alternative')),
   pitch_signature TEXT,
+  voice_signature TEXT,
+  voice_enrolled_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -69,8 +71,20 @@ ALTER TABLE bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_codes ENABLE ROW LEVEL SECURITY;
 
 -- Create policies to allow all operations (you can make these more restrictive)
+-- Drop existing policies first to avoid "already exists" error
+DROP POLICY IF EXISTS "Allow all operations on shops" ON shops;
+DROP POLICY IF EXISTS "Allow all operations on shopkeepers" ON shopkeepers;
+DROP POLICY IF EXISTS "Allow all operations on products" ON products;
+DROP POLICY IF EXISTS "Allow all operations on bills" ON bills;
+DROP POLICY IF EXISTS "Allow all operations on daily_codes" ON daily_codes;
+
 CREATE POLICY "Allow all operations on shops" ON shops FOR ALL USING (true);
 CREATE POLICY "Allow all operations on shopkeepers" ON shopkeepers FOR ALL USING (true);
 CREATE POLICY "Allow all operations on products" ON products FOR ALL USING (true);
 CREATE POLICY "Allow all operations on bills" ON bills FOR ALL USING (true);
 CREATE POLICY "Allow all operations on daily_codes" ON daily_codes FOR ALL USING (true);
+
+-- Migration: Add voice_signature columns to existing tables
+-- Run this if table already exists:
+-- ALTER TABLE shopkeepers ADD COLUMN IF NOT EXISTS voice_signature TEXT;
+-- ALTER TABLE shopkeepers ADD COLUMN IF NOT EXISTS voice_enrolled_at TIMESTAMP WITH TIME ZONE;
