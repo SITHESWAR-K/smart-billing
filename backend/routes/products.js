@@ -7,7 +7,7 @@ const { getDatabase } = require('../database/supabase');
  */
 router.get('/:shop_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const shop_id = req.params.shop_id.trim().toUpperCase();
     const supabase = getDatabase();
 
     const { data: products, error } = await supabase
@@ -30,8 +30,9 @@ router.get('/:shop_id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { shop_id, name, synonyms, quantity, price, brand } = req.body;
+    const normalizedShopId = shop_id?.trim().toUpperCase();
 
-    if (!shop_id || !name || price === undefined) {
+    if (!normalizedShopId || !name || price === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -40,7 +41,7 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabase
       .from('products')
       .insert({
-        shop_id,
+        shop_id: normalizedShopId,
         name,
         synonyms: synonyms || [],
         quantity: quantity || 0,

@@ -8,8 +8,9 @@ const { getDatabase } = require('../database/supabase');
 router.post('/', async (req, res) => {
   try {
     const { shop_id, items, total, created_by } = req.body;
+    const normalizedShopId = shop_id?.trim().toUpperCase();
 
-    if (!shop_id || !Array.isArray(items) || items.length === 0 || total === undefined) {
+    if (!normalizedShopId || !Array.isArray(items) || items.length === 0 || total === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -23,7 +24,7 @@ router.post('/', async (req, res) => {
     const { data: products, error: productsError } = await supabase
       .from('products')
       .select('id, name, quantity')
-      .eq('shop_id', shop_id)
+      .eq('shop_id', normalizedShopId)
       .in('id', productIds);
 
     if (productsError) throw productsError;

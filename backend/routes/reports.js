@@ -37,7 +37,7 @@ const getDateRange = (period, from, to) => {
 
 router.get('/:shop_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const shop_id = req.params.shop_id.trim().toUpperCase();
     const period = (req.query.period || 'daily').toLowerCase();
 
     if (!PERIODS.includes(period)) {

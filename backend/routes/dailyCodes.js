@@ -8,7 +8,7 @@ const { getDatabase } = require('../database/supabase');
  */
 router.get('/:shop_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const shop_id = req.params.shop_id.trim().toUpperCase();
     const today = new Date().toISOString().split('T')[0];
     const supabase = getDatabase();
 

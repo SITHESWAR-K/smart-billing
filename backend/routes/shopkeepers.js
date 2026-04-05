@@ -10,8 +10,9 @@ const { generateToken } = require('../middleware/auth');
 router.post('/register', async (req, res) => {
   try {
     const { shop_id, shop_name, name, pin, role = 'alternative' } = req.body;
+    const normalizedShopId = shop_id?.trim().toUpperCase();
 
-    if (!shop_id || !name || !pin) {
+    if (!normalizedShopId || !name || !pin) {
       return res.status(400).json({
         error: 'Missing required fields: shop_id, name, pin'
       });
@@ -27,7 +28,7 @@ router.post('/register', async (req, res) => {
     const { data: shop, error: shopError } = await supabase
       .from('shops')
       .select('*')
-      .eq('shop_id', shop_id)
+      .eq('shop_id', normalizedShopId)
       .single();
 
     if (shopError || !shop) {
@@ -38,7 +39,7 @@ router.post('/register', async (req, res) => {
     const { data: existing } = await supabase
       .from('shopkeepers')
       .select('id')
-      .eq('shop_id', shop_id)
+      .eq('shop_id', normalizedShopId)
       .eq('name', name)
       .single();
 
@@ -50,7 +51,7 @@ router.post('/register', async (req, res) => {
 
     const { data, error } = await supabase
       .from('shopkeepers')
-      .insert({ shop_id, name, pin_hash, role })
+      .insert({ shop_id: normalizedShopId, name, pin_hash, role })
       .select()
       .single();
 
@@ -72,10 +73,11 @@ router.post('/register', async (req, res) => {
 router.post('/get-by-shop', async (req, res) => {
   try {
     const { shopId, role } = req.body;
+    const normalizedShopId = shopId?.trim().toUpperCase();
 
-    console.log('get-by-shop called with:', { shopId, role });
+    console.log('get-by-shop called with:', { shopId: normalizedShopId, role });
 
-    if (!shopId || !role) {
+    if (!normalizedShopId || !role) {
       return res.status(400).json({ error: 'Missing required fields: shopId, role' });
     }
 
@@ -85,7 +87,7 @@ router.post('/get-by-shop', async (req, res) => {
     const { data: shopkeepers, error } = await supabase
       .from('shopkeepers')
       .select('id, shop_id, name, role, pitch_signature')
-      .eq('shop_id', shopId)
+      .eq('shop_id', normalizedShopId)
       .eq('role', role);
 
     console.log('Supabase query result:', { count: shopkeepers?.length, error });
@@ -96,10 +98,10 @@ router.post('/get-by-shop', async (req, res) => {
     }
 
     if (!shopkeepers || shopkeepers.length === 0) {
-      console.log('No shopkeepers found for shop_id:', shopId, 'role:', role);
+      console.log('No shopkeepers found for shop_id:', normalizedShopId, 'role:', role);
       return res.status(404).json({
         error: `No ${role} shopkeeper found for this shop`,
-        shop_id: shopId,
+        shop_id: normalizedShopId,
         role: role
       });
     }

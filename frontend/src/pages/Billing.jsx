@@ -32,7 +32,7 @@ const NUMBER_WORDS = {
   onnu: 1, rendu: 2, moonu: 3, naalu: 4, anju: 5,
   aaru: 6, yezhu: 7, yettu: 8, ombathu: 9, pathu: 10,
   // Telugu
-  okati: 1, rendu: 2, moodu: 3, naalugu: 4, aidu: 5,
+  okati: 1, moodu: 3, naalugu: 4, aidu: 5,
   // Common variations
   'double': 2, 'triple': 3, 'half': 0.5
 }
@@ -218,55 +218,33 @@ const Billing = () => {
 
   // Extract quantity from speech - improved patterns
   const extractQuantity = (text) => {
-    const lowerText = text.toLowerCase().trim()
+    // Work with original text for better extraction
+    let workText = (text || '').trim()
+    
+    console.log(`[QTY] Processing text: "${workText}"`)
 
-    // Pattern 1: "2 rice", "3 milk" - number at start followed by product name
-    const startNumberMatch = lowerText.match(/^(\d+)\s+[a-z]/i)
-    if (startNumberMatch) return parseInt(startNumberMatch[1], 10)
-
-    // Pattern 2: "rice 2", "milk 3" - product name followed by number at end
-    const endNumberMatch = lowerText.match(/[a-z]\s+(\d+)$/i)
-    if (endNumberMatch) return parseInt(endNumberMatch[1], 10)
-
-    // Pattern 3: "add 2 rice", "put 5 milk" - command + number + product
-    const commandMatch = lowerText.match(/(?:add|put|take|give|get)\s+(\d+)\s+[a-z]/i)
-    if (commandMatch) return parseInt(commandMatch[1], 10)
-
-    // Pattern 4: "2x rice", "3x milk" - multiplier format
-    const multiplierMatch = lowerText.match(/(\d+)\s*[x×]\s*[a-z]/i)
-    if (multiplierMatch) return parseInt(multiplierMatch[1], 10)
-
-    // Pattern 5: "2 kg rice", "3 packets milk" - number with unit
-    const unitMatch = lowerText.match(/(\d+)\s*(?:x|kg|kgs|kilo|kilos|gram|grams|g|packet|packets|piece|pieces|pcs|unit|units|bottle|bottles|box|boxes|litre|litres|liter|liters|l)\b/i)
-    if (unitMatch) return parseInt(unitMatch[1], 10)
-
-    // Pattern 6: Word numbers at start - "two rice", "three milk"
-    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
-      const wordStartRegex = new RegExp(`^${word}\\s+[a-z]`, 'i')
-      if (wordStartRegex.test(lowerText)) return num
+    // First try: MOST COMMON - "product name number" or "number product name"
+    // This handles: "sakthi sambar powder 2", "2 sakthi sambar powder", etc.
+    const numberMatch = workText.match(/\b(\d+)\b/)
+    if (numberMatch) {
+      const qty = parseInt(numberMatch[1], 10)
+      if (qty > 0 && qty < 1000) {  // Reasonable quantity range
+        console.log(`[QTY] Matched digit pattern: ${qty}`)
+        return qty
+      }
     }
 
-    // Pattern 7: Word numbers at end - "rice two", "milk three"
+    // Word-based numbers: "two", "three", "ek", "do", etc.
+    const lowerText = workText.toLowerCase()
     for (const [word, num] of Object.entries(NUMBER_WORDS)) {
-      const wordEndRegex = new RegExp(`[a-z]\\s+${word}$`, 'i')
-      if (wordEndRegex.test(lowerText)) return num
+      const regex = new RegExp(`\\b${word}\\b`, 'i')
+      if (regex.test(lowerText)) {
+        console.log(`[QTY] Matched word pattern "${word}": ${num}`)
+        return num
+      }
     }
 
-    // Pattern 8: Word numbers with commands - "add two rice", "do packet milk"
-    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
-      const wordCommandRegex = new RegExp(`(?:add|put|take|give|get)\\s+${word}\\s+[a-z]`, 'i')
-      if (wordCommandRegex.test(lowerText)) return num
-    }
-
-    // Pattern 9: Any number in the text (fallback)
-    const anyNumberMatch = lowerText.match(/\b(\d+)\b/)
-    if (anyNumberMatch) return parseInt(anyNumberMatch[1], 10)
-
-    // Pattern 10: Any word number in the text (fallback)
-    for (const [word, num] of Object.entries(NUMBER_WORDS)) {
-      if (new RegExp(`\\b${word}\\b`, 'i').test(lowerText)) return num
-    }
-
+    console.log(`[QTY] No quantity found, defaulting to 1`)
     return 1
   }
 
@@ -440,7 +418,7 @@ const Billing = () => {
         // With stretched cosine comparison:
         // Same speaker typically: 0.55-1.0
         // Different speaker typically: 0.20-0.50
-        const verified = similarity >= 0.50
+        const verified = similarity >= 0.65
         setVoiceVerified(verified)
         lastVerificationRef.current = Date.now()
         

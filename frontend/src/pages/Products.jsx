@@ -194,7 +194,7 @@ const Products = () => {
     console.log(`Products voice verification: similarity = ${similarity}`)
     
     // With stretched cosine comparison, same speaker: 0.55-1.0, different: 0.20-0.50
-    const verified = similarity >= 0.50
+    const verified = similarity >= 0.65
     setVoiceVerified(verified)
     lastVerificationRef.current = Date.now()
     

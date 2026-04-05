@@ -318,8 +318,8 @@ export class ContinuousVoiceRecorder {
     
     console.log(`Voice frames captured: ${this.mfccFrames.length}, valid: ${validFrames.length}`)
     
-    if (validFrames.length < 3) {
-      return null // Not enough voice data
+    if (validFrames.length < 5) {
+      return null // Not enough voice data - requires minimum 5 frames like enrollment
     }
     
     const numCoeffs = validFrames[0]?.length || 13

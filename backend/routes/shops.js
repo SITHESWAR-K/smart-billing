@@ -123,7 +123,7 @@ router.post('/', async (req, res) => {
  */
 router.get('/:shop_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const shop_id = req.params.shop_id.trim().toUpperCase();
     const supabase = getDatabase();
 
     const { data: shop, error } = await supabase
