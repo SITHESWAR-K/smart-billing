@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
 import api from '../api/api'
@@ -11,15 +11,9 @@ const DailyCode = () => {
   const [timeRemaining, setTimeRemaining] = useState({ hours: 0, minutes: 0 })
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetchDailyCode()
-    updateTimeRemaining()
+  const fetchDailyCode = useCallback(async () => {
+    if (!auth?.shopId) return
 
-    const interval = setInterval(updateTimeRemaining, 60000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const fetchDailyCode = async () => {
     try {
       setLoading(true)
       const response = await api.get(`/daily-codes/${auth.shopId}`)
@@ -36,7 +30,15 @@ const DailyCode = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [auth?.shopId])
+
+  useEffect(() => {
+    fetchDailyCode()
+    updateTimeRemaining()
+
+    const interval = setInterval(updateTimeRemaining, 60000)
+    return () => clearInterval(interval)
+  }, [fetchDailyCode])
 
   const updateTimeRemaining = () => {
     const now = new Date()

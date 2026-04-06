@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, Mic, Square, Search, Volume2, ShieldCheck, ShieldX } from 'lucide-react'
+import { Plus, Mic, Square, Search, Globe, ShieldCheck, ShieldX } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import BillItem from '../components/BillItem'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
-import { SpeechRecognizer, translateToEnglish } from '../utils/speechRecognition'
+import { SpeechRecognizer, translateToEnglish, supportedLanguages } from '../utils/speechRecognition'
 import { getVoiceRecorder, compareSignatures } from '../utils/voiceSignature'
 
 const LOW_STOCK_THRESHOLD = 5
@@ -58,6 +58,11 @@ const buildAliases = (product) => {
   return aliases.map(alias => normalizeVoiceText(alias || '')).filter(Boolean)
 }
 
+const buildDisplayName = (productName = '', productBrand = '') => {
+  if (productBrand && productName) return `${productBrand} ${productName}`
+  return productName || productBrand || ''
+}
+
 const Billing = () => {
   const navigate = useNavigate()
   const { auth } = useAuth()
@@ -67,6 +72,7 @@ const Billing = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedLang, setSelectedLang] = useState('en-IN')
 
   // Voice states
   const [isListening, setIsListening] = useState(false)
@@ -105,24 +111,9 @@ const Billing = () => {
     fetchVoiceSignature()
   }, [auth])
 
-  useEffect(() => {
-    fetchProducts()
-    return () => {
-      if (recognizerRef.current) {
-        recognizerRef.current.abort()
-      }
-    }
-  }, [])
+  const fetchProducts = useCallback(async () => {
+    if (!auth?.shopId) return
 
-  useEffect(() => {
-    billItemsRef.current = billItems
-  }, [billItems])
-
-  useEffect(() => {
-    productsRef.current = products
-  }, [products])
-
-  const fetchProducts = async () => {
     try {
       const response = await api.get(`/products/${auth.shopId}`)
       const productList = response.data.products || []
@@ -133,7 +124,24 @@ const Billing = () => {
     } catch (err) {
       setError('Failed to fetch products')
     }
-  }
+  }, [auth?.shopId])
+
+  useEffect(() => {
+    fetchProducts()
+    return () => {
+      if (recognizerRef.current) {
+        recognizerRef.current.abort()
+      }
+    }
+  }, [fetchProducts])
+
+  useEffect(() => {
+    billItemsRef.current = billItems
+  }, [billItems])
+
+  useEffect(() => {
+    productsRef.current = products
+  }, [products])
 
   // Find product by name or synonym
   const findProduct = (spokenText) => {
@@ -143,6 +151,7 @@ const Billing = () => {
     const cleanedText = normalizeVoiceText(
       searchText
         .replace(/\b(add|please|one|two|three|four|five|1|2|3|4|5|x)\b/gi, '')
+        .replace(/\b(quantity|qty|number|nos?)\b/gi, '')
         .replace(/\b(piece|pieces|kg|kilo|gram|packet|packets|bottle|box|unit|units)\b/gi, '')
     )
 
@@ -154,6 +163,8 @@ const Billing = () => {
 
     for (const product of productsRef.current) {
       const aliases = buildAliases(product)
+      const brandText = normalizeVoiceText(product.brand || '')
+      const productText = normalizeVoiceText(product.name || '')
 
       for (const alias of aliases) {
         let score = 0
@@ -165,6 +176,22 @@ const Billing = () => {
           const aliasWords = alias.split(' ').filter(Boolean)
           const overlap = words.filter(word => aliasWords.some(aliasWord => aliasWord.includes(word) || word.includes(aliasWord))).length
           if (overlap > 0) score = Math.min(70, 45 + overlap * 10)
+        }
+
+        // Strongly prioritize phrases that contain both brand and product name.
+        if (brandText && productText) {
+          const fullBrandName = `${brandText} ${productText}`
+          if (searchText.includes(fullBrandName)) {
+            score += 40
+          }
+        }
+
+        if (brandText && (searchText.includes(brandText) || cleanedText.includes(brandText))) {
+          score += 25
+        }
+
+        if (productText && (searchText.includes(productText) || cleanedText.includes(productText))) {
+          score += 15
         }
 
         if (score > bestScore) {
@@ -207,6 +234,8 @@ const Billing = () => {
       setBillItems(prev => [...prev, {
         productId: product.id,
         productName: product.name,
+        productBrand: product.brand || '',
+        displayName: buildDisplayName(product.name, product.brand),
         price: product.price,
         quantity: quantityToAdd
       }])
@@ -253,7 +282,7 @@ const Billing = () => {
     if (!added) return
 
     // Show feedback
-    setLastAddedProduct(product.name)
+    setLastAddedProduct(buildDisplayName(product.name, product.brand))
     setTimeout(() => setLastAddedProduct(null), 2000)
   }
 
@@ -270,7 +299,7 @@ const Billing = () => {
       }
 
       const recognizer = new SpeechRecognizer({
-        lang: 'en-IN',
+        lang: selectedLang,
         continuous: true,
         interimResults: true,
         onStart: () => {
@@ -346,7 +375,10 @@ const Billing = () => {
       const productToRemove = findProduct(normalized)
       if (productToRemove) {
         setBillItems(prev => prev.filter(item => item.productId !== productToRemove.id))
-        return { matched: true, status: `Removed: ${productToRemove.name}` }
+        return {
+          matched: true,
+          status: `Removed: ${buildDisplayName(productToRemove.name, productToRemove.brand)}`
+        }
       }
     }
 
@@ -354,7 +386,10 @@ const Billing = () => {
     if (localMatch) {
       const quantity = extractQuantity(normalized)
       handleAddProduct(localMatch, quantity)
-      return { matched: true, status: `${t('added')}: ${localMatch.name} x${quantity}` }
+      return {
+        matched: true,
+        status: `${t('added')}: ${buildDisplayName(localMatch.name, localMatch.brand)} x${quantity}`
+      }
     }
 
     try {
@@ -500,10 +535,15 @@ const Billing = () => {
     setError('')
 
     try {
+      const normalizedItems = billItems.map(item => ({
+        ...item,
+        displayName: item.displayName || buildDisplayName(item.productName, item.productBrand)
+      }))
+
       const billData = {
         shop_id: auth.shopId,
-        items: billItems,
-        total: billItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+        items: normalizedItems,
+        total: normalizedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
         created_by: auth.name
       }
 
@@ -534,24 +574,39 @@ const Billing = () => {
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-4xl font-bold text-gray-800">{t('createBill')}</h1>
 
-          {/* Voice Billing Button */}
-          {!isListening ? (
-            <button
-              onClick={startVoiceBilling}
-              className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition"
-            >
-              <Mic size={24} />
-              {t('voiceBilling')}
-            </button>
-          ) : (
-            <button
-              onClick={stopVoiceBilling}
-              className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition animate-pulse"
-            >
-              <Square size={24} />
-              {t('stopVoice')}
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+              <Globe size={16} className="text-gray-500" />
+              <select
+                value={selectedLang}
+                onChange={(e) => setSelectedLang(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:border-emerald-500"
+              >
+                {supportedLanguages.map(lang => (
+                  <option key={lang.code} value={lang.code}>{lang.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Voice Billing Button */}
+            {!isListening ? (
+              <button
+                onClick={startVoiceBilling}
+                className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition"
+              >
+                <Mic size={24} />
+                {t('voiceBilling')}
+              </button>
+            ) : (
+              <button
+                onClick={stopVoiceBilling}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition animate-pulse"
+              >
+                <Square size={24} />
+                {t('stopVoice')}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Voice Status Banner */}

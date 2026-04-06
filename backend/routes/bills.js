@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabase
       .from('bills')
       .insert({
-        shop_id,
+        shop_id: normalizedShopId,
         items,
         total: parseFloat(total),
         created_by: created_by || 'Unknown'
@@ -76,7 +76,7 @@ router.post('/', async (req, res) => {
           .from('products')
           .update({ quantity: newQty, updated_at: new Date().toISOString() })
           .eq('id', item.productId)
-          .eq('shop_id', shop_id);
+          .eq('shop_id', normalizedShopId);
 
         if (updateError) throw updateError;
 

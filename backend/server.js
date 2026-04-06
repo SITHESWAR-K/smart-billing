@@ -1,12 +1,13 @@
-// Load dotenv only if .env file exists and not in production
-try {
-  require('dotenv').config();
-} catch (e) {
-  // Ignore if dotenv fails
+// Load dotenv only for non-production environments.
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    require('dotenv').config();
+  } catch (e) {
+    // Ignore if dotenv fails
+  }
 }
 
 const express = require('express');
-
 const helmet = require('helmet');
 const { initDatabase } = require('./database/supabase');
 

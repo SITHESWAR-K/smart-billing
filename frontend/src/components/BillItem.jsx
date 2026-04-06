@@ -1,10 +1,12 @@
 import { Trash2 } from 'lucide-react'
 
 const BillItem = ({ item, onQuantityChange, onRemove }) => {
+  const displayName = item.displayName || [item.productBrand, item.productName].filter(Boolean).join(' ') || item.productName
+
   return (
     <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-200">
       <div className="flex-1">
-        <p className="font-semibold">{item.productName}</p>
+        <p className="font-semibold">{displayName}</p>
         <p className="text-sm text-gray-600">Rs.{item.price} each</p>
       </div>
       <div className="flex items-center gap-3 mx-4">

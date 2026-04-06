@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { BarChart3, CalendarDays, Receipt, IndianRupee, Package } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import api from '../api/api'
@@ -17,7 +17,7 @@ const Reports = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const fetchReports = async (selectedPeriod) => {
+  const fetchReports = useCallback(async (selectedPeriod) => {
     if (!auth?.shopId) return
 
     try {
@@ -30,11 +30,11 @@ const Reports = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [auth?.shopId])
 
   useEffect(() => {
     fetchReports(period)
-  }, [auth?.shopId, period])
+  }, [fetchReports, period])
 
   const summaryCards = useMemo(() => {
     if (!report?.summary) return []

@@ -20,7 +20,7 @@ const Dashboard = () => {
       // Clear the state so message doesn't show on refresh
       navigate(location.pathname, { replace: true })
     }
-  }, [location.state])
+  }, [location.pathname, location.state, navigate])
 
   useEffect(() => {
     // Clear success message after 5 seconds

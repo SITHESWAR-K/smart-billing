@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Calendar, User, DollarSign, Package, Check, Printer, Share2, RefreshCw } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
+
+const getBillItemDisplayName = (item = {}) => (
+  item.displayName || [item.productBrand, item.productName].filter(Boolean).join(' ') || item.productName || 'Item'
+)
 
 const Bills = () => {
   const { auth } = useAuth()
@@ -17,6 +21,35 @@ const Bills = () => {
   const [successMessage, setSuccessMessage] = useState('')
   const [expandedBill, setExpandedBill] = useState(null)
   const [lowStockMessage, setLowStockMessage] = useState('')
+
+  const fetchBills = useCallback(async () => {
+    if (!auth?.shopId) {
+      console.error('No shopId available for fetching bills')
+      setLoading(false)
+      return
+    }
+
+    try {
+      setLoading(true)
+      setError('')
+      console.log('Fetching bills for shop:', auth.shopId)
+      const response = await api.get(`/bills/${auth.shopId}`)
+      console.log('Bills response:', response.data)
+
+      // Handle both response formats: array directly or {bills: [...]} 
+      const billsData = Array.isArray(response.data)
+        ? response.data
+        : (response.data.bills || [])
+
+      console.log('Bills data to display:', billsData)
+      setBills(billsData)
+    } catch (err) {
+      console.error('Error fetching bills:', err)
+      setError('Failed to fetch bills: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setLoading(false)
+    }
+  }, [auth?.shopId])
 
   useEffect(() => {
     // Check if we came from billing page with a new bill
@@ -32,14 +65,13 @@ const Bills = () => {
       // Clear the state so message doesn't show on refresh
       navigate(location.pathname, { replace: true })
     }
-  }, [])
+  }, [location.pathname, location.state?.lowStockAlerts, location.state?.newBillId, navigate])
 
   useEffect(() => {
-    // Only fetch bills when auth is available
     if (auth?.shopId) {
       fetchBills()
     }
-  }, [auth?.shopId])
+  }, [auth?.shopId, fetchBills])
 
   useEffect(() => {
     // Clear success message after 5 seconds
@@ -48,35 +80,6 @@ const Bills = () => {
       return () => clearTimeout(timer)
     }
   }, [successMessage])
-
-  const fetchBills = async () => {
-    if (!auth?.shopId) {
-      console.error('No shopId available for fetching bills')
-      setLoading(false)
-      return
-    }
-
-    try {
-      setLoading(true)
-      setError('')
-      console.log('Fetching bills for shop:', auth.shopId)
-      const response = await api.get(`/bills/${auth.shopId}`)
-      console.log('Bills response:', response.data)
-
-      // Handle both response formats: array directly or {bills: [...]}
-      const billsData = Array.isArray(response.data)
-        ? response.data
-        : (response.data.bills || [])
-
-      console.log('Bills data to display:', billsData)
-      setBills(billsData)
-    } catch (err) {
-      console.error('Error fetching bills:', err)
-      setError('Failed to fetch bills: ' + (err.response?.data?.error || err.message))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const handlePrint = (bill) => {
     const printWindow = window.open('', '_blank')
@@ -110,7 +113,7 @@ const Bills = () => {
         <div class="items">
           ${bill.items?.map(item => `
             <div class="item">
-              <span>${item.productName} x${item.quantity}</span>
+              <span>${getBillItemDisplayName(item)} x${item.quantity}</span>
               <span>Rs.${(item.price * item.quantity).toFixed(2)}</span>
             </div>
           `).join('')}
@@ -135,7 +138,7 @@ Bill #: ${bill.id}
 Date: ${new Date(bill.created_at).toLocaleString()}
 
 *Items:*
-${bill.items?.map(item => `- ${item.productName} x${item.quantity} = Rs.${(item.price * item.quantity).toFixed(2)}`).join('\n')}
+${bill.items?.map(item => `- ${getBillItemDisplayName(item)} x${item.quantity} = Rs.${(item.price * item.quantity).toFixed(2)}`).join('\n')}
 
 *Total: Rs.${bill.total?.toFixed(2)}*
 
@@ -263,7 +266,7 @@ Thank you for your purchase!
                   <div className="grid sm:grid-cols-2 gap-2">
                     {bill.items?.map((item, idx) => (
                       <div key={idx} className="flex justify-between text-gray-600 text-sm bg-gray-50 p-2 rounded">
-                        <span>{item.productName} x{item.quantity}</span>
+                        <span>{getBillItemDisplayName(item)} x{item.quantity}</span>
                         <span className="font-semibold">Rs.{(item.price * item.quantity).toFixed(2)}</span>
                       </div>
                     ))}

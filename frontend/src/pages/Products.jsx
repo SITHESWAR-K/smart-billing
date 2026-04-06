@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, X, Mic, Square, Globe, ShieldCheck, ShieldX } from 'lucide-react'
 import Navbar from '../components/Navbar'
@@ -123,6 +123,17 @@ const Products = () => {
   const [verificationEnabled, setVerificationEnabled] = useState(false)
   const lastVerificationRef = useRef(0)
 
+  const fetchProducts = useCallback(async () => {
+    if (!auth?.shopId) return
+
+    try {
+      const response = await api.get(`/products/${auth.shopId}`)
+      setProducts(response.data.products || [])
+    } catch (err) {
+      setError('Failed to fetch products')
+    }
+  }, [auth?.shopId])
+
   useEffect(() => {
     fetchProducts()
 
@@ -132,7 +143,7 @@ const Products = () => {
         recognizerRef.current.abort()
       }
     }
-  }, [])
+  }, [fetchProducts])
 
   // Voice verification state
   const [storedSignature, setStoredSignature] = useState(null)
@@ -157,15 +168,6 @@ const Products = () => {
     
     checkVoiceStatus()
   }, [auth])
-
-  const fetchProducts = async () => {
-    try {
-      const response = await api.get(`/products/${auth.shopId}`)
-      setProducts(response.data.products || [])
-    } catch (err) {
-      setError('Failed to fetch products')
-    }
-  }
 
   const handleChange = (e) => {
     const { name, value } = e.target
