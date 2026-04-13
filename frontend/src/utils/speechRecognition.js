@@ -1,7 +1,25 @@
 // Web Speech API - FREE browser-based speech recognition
 // Supports multiple languages including English, Tamil, Hindi
 
+const isBrowser = typeof window !== 'undefined'
+
+export const isMobileDevice = () => {
+  if (!isBrowser) return false
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')
+}
+
+export const stopSpeechSynthesis = () => {
+  if (!isBrowser || !('speechSynthesis' in window)) return
+  try {
+    window.speechSynthesis.cancel()
+  } catch (error) {
+    // No-op: some browsers can throw when synthesis is unavailable.
+  }
+}
+
 export class SpeechRecognizer {
+  static activeInstance = null
+
   constructor(options = {}) {
     this.lang = options.lang || 'en-IN' // Default to Indian English
     this.continuous = options.continuous || false
@@ -22,7 +40,7 @@ export class SpeechRecognizer {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     
     if (!SpeechRecognition) {
-      throw new Error('Speech Recognition not supported in this browser. Please use Chrome or Edge.')
+      throw new Error('SPEECH_UNSUPPORTED')
     }
 
     this.recognition = new SpeechRecognition()
@@ -32,6 +50,7 @@ export class SpeechRecognizer {
 
     this.recognition.onstart = () => {
       this.isListening = true
+      SpeechRecognizer.activeInstance = this
       this.onStart()
     }
 
@@ -57,11 +76,13 @@ export class SpeechRecognizer {
 
     this.recognition.onerror = (event) => {
       this.isListening = false
+      SpeechRecognizer.clearActive(this)
       this.onError(event.error)
     }
 
     this.recognition.onend = () => {
       this.isListening = false
+      SpeechRecognizer.clearActive(this)
       this.onEnd()
     }
 
@@ -72,19 +93,24 @@ export class SpeechRecognizer {
     if (!this.recognition) {
       this.init()
     }
+    stopSpeechSynthesis()
+    SpeechRecognizer.stopActive(this)
     this.recognition.start()
+    SpeechRecognizer.activeInstance = this
   }
 
   stop() {
     if (this.recognition) {
       this.recognition.stop()
     }
+    SpeechRecognizer.clearActive(this)
   }
 
   abort() {
     if (this.recognition) {
       this.recognition.abort()
     }
+    SpeechRecognizer.clearActive(this)
   }
 
   setLanguage(lang) {
@@ -93,13 +119,38 @@ export class SpeechRecognizer {
       this.recognition.lang = lang
     }
   }
+
+  static stopActive(instanceToKeep = null) {
+    if (!SpeechRecognizer.activeInstance) return
+    if (instanceToKeep && SpeechRecognizer.activeInstance === instanceToKeep) return
+    try {
+      SpeechRecognizer.activeInstance.abort()
+    } catch (error) {
+      // Ignore abort failures; browser may already be stopping.
+    }
+  }
+
+  static clearActive(instance) {
+    if (SpeechRecognizer.activeInstance === instance) {
+      SpeechRecognizer.activeInstance = null
+    }
+  }
+}
+
+export const stopActiveRecognition = () => {
+  SpeechRecognizer.stopActive(null)
 }
 
 // Parse spoken product info
 // Examples: "rice 50 rupees", "Sugar 2 kg 80 rupees", "Amul butter 55", "Wheat ₹50"
 // "rice 2 kg 2 pieces" - for quantity
 export const parseProductFromSpeech = (text) => {
-  const lowerText = text.toLowerCase().trim()
+  const lowerText = text
+    .toLowerCase()
+    .replace(/\bkgs?\b/g, 'kg')
+    .replace(/\brupees?\b/g, 'rs')
+    .replace(/\s+/g, ' ')
+    .trim()
   
   // Extract price (looks for various formats)
   let price = null
@@ -122,7 +173,7 @@ export const parseProductFromSpeech = (text) => {
   }
 
   // Extract quantity - look for the LAST number with units
-  let quantity = 1
+  let quantity = null
   const quantityPatterns = [
     /(\d+(?:\.\d+)?)\s*(?:kg|kilo|kilogram|kilos)/i,
     /(\d+(?:\.\d+)?)\s*(?:g|gram|grams)/i,

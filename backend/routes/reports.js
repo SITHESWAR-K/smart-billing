@@ -114,4 +114,86 @@ router.get('/:shop_id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/reports/:shop_id/product
+ * Product-specific sales summary
+ */
+router.get('/:shop_id/product', async (req, res) => {
+  try {
+    const shop_id = req.params.shop_id.trim().toUpperCase();
+    const period = (req.query.period || 'daily').toLowerCase();
+    const productId = req.query.productId;
+
+    if (!productId) {
+      return res.status(400).json({ error: 'Missing required query: productId' });
+    }
+
+    if (!PERIODS.includes(period)) {
+      return res.status(400).json({ error: 'Invalid period. Use daily, monthly, or yearly.' });
+    }
+
+    const { start, end } = getDateRange(period, req.query.from, req.query.to);
+    const supabase = getDatabase();
+
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .select('id, name, brand')
+      .eq('shop_id', shop_id)
+      .eq('id', productId)
+      .single();
+
+    if (productError) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const { data: bills, error } = await supabase
+      .from('bills')
+      .select('id, items, created_at')
+      .eq('shop_id', shop_id)
+      .gte('created_at', start.toISOString())
+      .lte('created_at', end.toISOString());
+
+    if (error) throw error;
+
+    let totalQuantity = 0;
+    let totalSales = 0;
+    let billsCount = 0;
+
+    for (const bill of bills || []) {
+      const items = Array.isArray(bill.items) ? bill.items : [];
+      let billMatched = false;
+
+      for (const item of items) {
+        if (String(item.productId) !== String(productId)) continue;
+        const quantity = Number(item.quantity) || 0;
+        const price = Number(item.price) || 0;
+        totalQuantity += quantity;
+        totalSales += quantity * price;
+        billMatched = true;
+      }
+
+      if (billMatched) billsCount += 1;
+    }
+
+    res.json({
+      period,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      product: {
+        id: product.id,
+        name: product.name,
+        brand: product.brand || null
+      },
+      summary: {
+        total_quantity: Number(totalQuantity.toFixed(2)),
+        total_sales: Number(totalSales.toFixed(2)),
+        bills_count: billsCount,
+        average_price: totalQuantity > 0 ? Number((totalSales / totalQuantity).toFixed(2)) : 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve product report', details: error.message });
+  }
+});
+
 module.exports = router;

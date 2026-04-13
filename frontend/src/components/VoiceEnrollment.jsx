@@ -1,176 +1,150 @@
-import { useState, useEffect } from 'react'
-import { Mic, CheckCircle, AlertCircle, Loader2, Volume2 } from 'lucide-react'
-import { extractVoiceSignature } from '../utils/voiceSignature'
+import { useState } from 'react'
+import { Mic, Square, ShieldCheck } from 'lucide-react'
+import { useLanguage } from '../context/LanguageContext'
+import {
+	captureVoiceSignature,
+	compareVoiceSignatures,
+	isVoiceCaptureSupported,
+	serializeVoiceSignature
+} from '../utils/voiceSignature'
 
-const VoiceEnrollment = ({ dailyCode, onEnrollmentComplete, onSkip }) => {
-  const [stage, setStage] = useState('ready') // ready, recording, processing, success, error
-  const [progress, setProgress] = useState(0)
-  const [error, setError] = useState('')
-  const [countdown, setCountdown] = useState(3)
+const VoiceEnrollment = ({
+	mode = 'verify',
+	storedSignature,
+	threshold = 0.45,
+	promptText,
+	code,
+	onSuccess,
+	onSkip
+}) => {
+	const { t } = useLanguage()
+	const [isRecording, setIsRecording] = useState(false)
+	const [status, setStatus] = useState('')
+	const [error, setError] = useState('')
+	const [score, setScore] = useState(null)
 
-  const startEnrollment = async () => {
-    setStage('countdown')
-    setError('')
-    
-    // Countdown before recording
-    for (let i = 3; i > 0; i--) {
-      setCountdown(i)
-      await new Promise(resolve => setTimeout(resolve, 1000))
-    }
-    
-    setStage('recording')
-    setProgress(0)
-    
-    try {
-      // Record for 4 seconds while user reads the daily code
-      const signature = await extractVoiceSignature(4000, (p) => setProgress(p))
-      
-      setStage('processing')
-      
-      // Small delay for UX
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      setStage('success')
-      
-      // Wait a moment then complete
-      setTimeout(() => {
-        onEnrollmentComplete(signature)
-      }, 1500)
-      
-    } catch (err) {
-      console.error('Enrollment failed:', err)
-      setError(err.message || 'Voice enrollment failed. Please try again.')
-      setStage('error')
-    }
-  }
+	const handleCapture = async () => {
+		if (!isVoiceCaptureSupported()) {
+			setError(t('voiceUnsupported'))
+			return
+		}
 
-  const retry = () => {
-    setStage('ready')
-    setError('')
-    setProgress(0)
-  }
+		setError('')
+		setScore(null)
+		setStatus(t('voiceRecording'))
+		setIsRecording(true)
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Volume2 size={32} className="text-white" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-800">Voice Enrollment</h2>
-          <p className="text-gray-600 mt-2">
-            Read the daily code aloud to register your voice
-          </p>
-        </div>
+		try {
+			const signature = await captureVoiceSignature()
 
-        {/* Daily Code Display */}
-        <div className="bg-gradient-to-r from-emerald-50 to-blue-50 border-2 border-emerald-200 rounded-xl p-6 mb-6">
-          <p className="text-sm text-emerald-700 text-center mb-2">Today's Code</p>
-          <p className="text-4xl font-bold font-mono tracking-widest text-center text-emerald-800">
-            {dailyCode || 'LOADING'}
-          </p>
-        </div>
+			if (mode === 'verify') {
+				const result = compareVoiceSignatures(storedSignature, signature, { threshold })
+				setScore(result.score)
+				if (result.isMatch) {
+					setStatus(t('voiceMatchSuccess'))
+					onSuccess?.({ signature, score: result.score })
+				} else {
+					setStatus('')
+					setError(t('voiceMatchFail'))
+				}
+			} else {
+				const serialized = serializeVoiceSignature(signature)
+				setStatus(t('voiceEnrollSuccess'))
+				onSuccess?.({ signature, serialized })
+			}
+		} catch (err) {
+			setStatus('')
+			if (err?.message === 'VOICE_NO_CLEAR') {
+				setError(t('voiceNoClear'))
+			} else {
+				setError(t('voiceEnrollFail'))
+			}
+		} finally {
+			setIsRecording(false)
+		}
+	}
 
-        {/* Stage: Ready */}
-        {stage === 'ready' && (
-          <div className="text-center">
-            <p className="text-gray-600 mb-6">
-              Click the button below, then <strong>read the code aloud clearly</strong>. 
-              This registers your voice for today's session.
-            </p>
-            <button
-              onClick={startEnrollment}
-              className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition shadow-lg"
-            >
-              <Mic size={24} />
-              Start Voice Enrollment
-            </button>
-            <button
-              onClick={onSkip}
-              className="w-full mt-3 text-gray-500 hover:text-gray-700 py-2 transition"
-            >
-              Skip for now
-            </button>
-          </div>
-        )}
+	const title = mode === 'verify' ? t('voiceVerifyTitle') : t('voiceEnrollTitle')
+	const description = mode === 'verify' ? t('voiceVerifyDesc') : t('voiceEnrollDesc')
+	const resolvedPrompt = promptText || t('voicePrompt')
 
-        {/* Stage: Countdown */}
-        {stage === 'countdown' && (
-          <div className="text-center">
-            <div className="w-24 h-24 bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-              <span className="text-5xl font-bold text-white">{countdown}</span>
-            </div>
-            <p className="text-lg text-gray-600">Get ready to read the code...</p>
-          </div>
-        )}
+	return (
+		<div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
+			<div className="flex items-center gap-3 mb-4">
+				<div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
+					<ShieldCheck className="text-emerald-600" size={24} />
+				</div>
+				<div>
+					<h2 className="text-xl font-bold text-gray-800">{title}</h2>
+					<p className="text-gray-600 text-sm">{description}</p>
+				</div>
+			</div>
 
-        {/* Stage: Recording */}
-        {stage === 'recording' && (
-          <div className="text-center">
-            <div className="w-24 h-24 bg-red-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-              <Mic size={40} className="text-white" />
-            </div>
-            <p className="text-lg font-semibold text-red-600 mb-4">🎤 Recording...</p>
-            <p className="text-gray-600 mb-4">
-              Read aloud: <strong className="text-emerald-700">{dailyCode}</strong>
-            </p>
-            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-emerald-500 to-blue-500 h-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="text-sm text-gray-500 mt-2">{progress}%</p>
-          </div>
-        )}
+			<div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4">
+				<p className="text-sm text-emerald-700">{resolvedPrompt}</p>
+			</div>
 
-        {/* Stage: Processing */}
-        {stage === 'processing' && (
-          <div className="text-center">
-            <Loader2 size={48} className="text-emerald-500 animate-spin mx-auto mb-4" />
-            <p className="text-lg text-gray-600">Processing your voice...</p>
-          </div>
-        )}
+			{code && (
+				<div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4">
+					<p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+						{t('voiceDailyCodeLabel')}
+					</p>
+					<p className="font-mono text-2xl text-slate-800 mb-2">{code}</p>
+					<p className="text-xs text-slate-500">{t('voiceDailyCodeHint')}</p>
+				</div>
+			)}
 
-        {/* Stage: Success */}
-        {stage === 'success' && (
-          <div className="text-center">
-            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle size={48} className="text-green-500" />
-            </div>
-            <p className="text-xl font-semibold text-green-600 mb-2">Voice Enrolled!</p>
-            <p className="text-gray-600">
-              Your voice has been registered for this session.
-            </p>
-          </div>
-        )}
+			{error && (
+				<div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+					{error}
+				</div>
+			)}
 
-        {/* Stage: Error */}
-        {stage === 'error' && (
-          <div className="text-center">
-            <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <AlertCircle size={48} className="text-red-500" />
-            </div>
-            <p className="text-lg font-semibold text-red-600 mb-2">Enrollment Failed</p>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <button
-              onClick={retry}
-              className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white font-bold py-3 px-6 rounded-xl transition"
-            >
-              Try Again
-            </button>
-            <button
-              onClick={onSkip}
-              className="w-full mt-3 text-gray-500 hover:text-gray-700 py-2 transition"
-            >
-              Skip for now
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
+			{status && (
+				<div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg mb-4">
+					{status}
+				</div>
+			)}
+
+			{score !== null && (
+				<p className="text-sm text-gray-500 mb-4">
+					{t('voiceScore', { score })}
+				</p>
+			)}
+
+			<div className="flex flex-wrap items-center gap-3">
+				{!isRecording ? (
+					<button
+						type="button"
+						onClick={handleCapture}
+						className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-3 rounded-xl font-semibold transition"
+					>
+						<Mic size={20} />
+						{t('voiceStart')}
+					</button>
+				) : (
+					<button
+						type="button"
+						className="flex items-center gap-2 bg-red-500 text-white px-5 py-3 rounded-xl font-semibold transition animate-pulse"
+						disabled
+					>
+						<Square size={20} />
+						{t('voiceRecording')}
+					</button>
+				)}
+
+				{onSkip && (
+					<button
+						type="button"
+						onClick={onSkip}
+						className="text-gray-600 hover:text-gray-800 font-semibold"
+					>
+						{t('voiceSkip')}
+					</button>
+				)}
+			</div>
+		</div>
+	)
 }
 
 export default VoiceEnrollment

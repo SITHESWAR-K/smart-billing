@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Store, LogIn, Mic, Shield, Clock } from 'lucide-react'
+import { Store, LogIn, Mic, Shield } from 'lucide-react'
 import { useLanguage } from '../context/LanguageContext'
 import LanguageToggle from '../components/LanguageToggle'
 
@@ -26,7 +26,7 @@ const Home = () => {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-emerald-50">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-emerald-50 overflow-hidden">
       {/* Language Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <LanguageToggle />
@@ -34,14 +34,14 @@ const Home = () => {
 
       {/* Hero Section */}
       <div className="flex flex-col items-center justify-center px-4 py-12">
-        <div className="max-w-5xl w-full">
+        <div className="max-w-6xl w-full">
           {/* Logo and Title */}
           <div className="text-center mb-10">
             <div className="flex justify-center mb-4">
               <img src="/logo.svg" alt="GrociBill Logo" className="w-28 h-28 md:w-36 md:h-36 drop-shadow-lg" />
             </div>
-            <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent mb-3">{t('smartBilling')}</h1>
-            <p className="text-lg md:text-xl text-gray-600 mb-6">{t('tagline')}</p>
+            <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent mb-4">{t('smartBilling')}</h1>
+            <p className="text-lg md:text-xl text-gray-600 mb-6 max-w-2xl mx-auto">{t('tagline')}</p>
 
             {/* Feature Pills */}
             <div className="flex flex-wrap justify-center gap-3 mb-8">
@@ -51,16 +51,13 @@ const Home = () => {
               <span className="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm flex items-center gap-2 font-medium">
                 <Shield size={16} /> {t('pinVoiceAuth')}
               </span>
-              <span className="bg-teal-100 text-teal-700 px-4 py-2 rounded-full text-sm flex items-center gap-2 font-medium">
-                <Clock size={16} /> {t('dailySecurityCodes')}
-              </span>
             </div>
           </div>
 
           {/* Main CTA Cards */}
-          <div className="grid md:grid-cols-2 gap-6 mb-12">
+          <div className="grid md:grid-cols-2 gap-6 mb-14">
             <Link to="/register-shop" className="group">
-              <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-2xl hover:scale-[1.02] transition-all cursor-pointer h-full border border-gray-100 hover:border-emerald-300">
+              <div className="bg-white rounded-3xl shadow-lg p-8 hover:shadow-2xl hover:scale-[1.02] transition-all cursor-pointer h-full border border-gray-100 hover:border-emerald-300">
                 <div className="flex items-center justify-center w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl mb-6 group-hover:scale-110 transition shadow-lg">
                   <Store className="text-white" size={40} />
                 </div>
@@ -73,7 +70,7 @@ const Home = () => {
             </Link>
 
             <Link to="/login" className="group">
-              <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-2xl hover:scale-[1.02] transition-all cursor-pointer h-full border border-gray-100 hover:border-blue-300">
+              <div className="bg-white rounded-3xl shadow-lg p-8 hover:shadow-2xl hover:scale-[1.02] transition-all cursor-pointer h-full border border-gray-100 hover:border-blue-300">
                 <div className="flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl mb-6 group-hover:scale-110 transition shadow-lg">
                   <LogIn className="text-white" size={40} />
                 </div>
@@ -87,7 +84,7 @@ const Home = () => {
           </div>
 
           {/* How It Works Section */}
-          <div className="bg-gradient-to-r from-emerald-500 to-blue-500 rounded-3xl p-8 mb-12 shadow-xl">
+          <div className="bg-gradient-to-r from-emerald-500 to-blue-500 rounded-[32px] p-8 mb-12 shadow-2xl">
             <h2 className="text-3xl font-bold text-white text-center mb-8">{t('howItWorks')}</h2>
             <div className="grid md:grid-cols-5 gap-4">
               {howItWorksSteps.map((step, index) => (
@@ -106,7 +103,7 @@ const Home = () => {
           </div>
 
           {/* Key Features Section */}
-          <div className="bg-white rounded-3xl shadow-xl p-8 border border-gray-100">
+          <div className="bg-white rounded-[32px] shadow-2xl p-8 border border-gray-100">
             <h2 className="text-3xl font-bold text-gray-800 text-center mb-8">{t('keyFeatures')}</h2>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {features.map((feature, index) => (

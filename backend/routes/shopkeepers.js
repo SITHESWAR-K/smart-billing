@@ -86,7 +86,7 @@ router.post('/get-by-shop', async (req, res) => {
     // Get ALL shopkeepers with this role (not just one)
     const { data: shopkeepers, error } = await supabase
       .from('shopkeepers')
-      .select('id, shop_id, name, role, pitch_signature')
+      .select('id, shop_id, name, role, pitch_signature, voice_signature, voice_enrolled_at')
       .eq('shop_id', normalizedShopId)
       .eq('role', role);
 
@@ -170,7 +170,9 @@ router.post('/verify-pin', async (req, res) => {
       shopkeeper: {
         id: shopkeeper.id,
         name: shopkeeper.name,
-        role: shopkeeper.role
+        role: shopkeeper.role,
+        voice_signature: shopkeeper.voice_signature || null,
+        voice_enrolled_at: shopkeeper.voice_enrolled_at || null
       }
     });
   } catch (error) {
@@ -179,36 +181,10 @@ router.post('/verify-pin', async (req, res) => {
 });
 
 /**
- * POST /api/shopkeepers/save-pitch
+ * POST /api/shopkeepers/voice-enroll
+ * Save voice signature for low-accuracy verification
  */
-router.post('/save-pitch', async (req, res) => {
-  try {
-    const { shopkeeperId, pitchSignature } = req.body;
-
-    if (!shopkeeperId || !pitchSignature) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const supabase = getDatabase();
-
-    const { error } = await supabase
-      .from('shopkeepers')
-      .update({ pitch_signature: JSON.stringify(pitchSignature) })
-      .eq('id', shopkeeperId);
-
-    if (error) throw error;
-
-    res.json({ message: 'Pitch signature saved successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to save pitch signature', details: error.message });
-  }
-});
-
-/**
- * POST /api/shopkeepers/enroll-voice
- * Store MFCC-based voice signature for shopkeeper
- */
-router.post('/enroll-voice', async (req, res) => {
+router.post('/voice-enroll', async (req, res) => {
   try {
     const { shopkeeperId, voiceSignature } = req.body;
 
@@ -216,210 +192,29 @@ router.post('/enroll-voice', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: shopkeeperId, voiceSignature' });
     }
 
-    // Validate signature structure
-    if (!voiceSignature.mfcc || !Array.isArray(voiceSignature.mfcc)) {
-      return res.status(400).json({ error: 'Invalid voice signature format' });
-    }
-
     const supabase = getDatabase();
+    const signatureValue = typeof voiceSignature === 'string'
+      ? voiceSignature
+      : JSON.stringify(voiceSignature);
 
-    // Store voice signature with enrollment timestamp
-    const signatureData = {
-      ...voiceSignature,
-      enrolledAt: new Date().toISOString()
-    };
-
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('shopkeepers')
-      .update({ 
-        voice_signature: JSON.stringify(signatureData),
+      .update({
+        voice_signature: signatureValue,
         voice_enrolled_at: new Date().toISOString()
       })
-      .eq('id', shopkeeperId);
+      .eq('id', shopkeeperId)
+      .select('id, voice_signature, voice_enrolled_at')
+      .single();
 
     if (error) throw error;
 
-    res.json({ 
-      message: 'Voice signature enrolled successfully',
-      enrolledAt: signatureData.enrolledAt
+    res.json({
+      message: 'Voice signature enrolled',
+      shopkeeper: data
     });
   } catch (error) {
-    console.error('Voice enrollment error:', error);
     res.status(500).json({ error: 'Failed to enroll voice signature', details: error.message });
-  }
-});
-
-/**
- * POST /api/shopkeepers/verify-voice
- * Verify current voice against stored MFCC signature
- */
-router.post('/verify-voice', async (req, res) => {
-  try {
-    const { shopkeeperId, currentSignature } = req.body;
-
-    if (!shopkeeperId || !currentSignature) {
-      return res.status(400).json({ error: 'Missing required fields: shopkeeperId, currentSignature' });
-    }
-
-    const supabase = getDatabase();
-
-    const { data: shopkeeper, error } = await supabase
-      .from('shopkeepers')
-      .select('voice_signature, voice_enrolled_at, name')
-      .eq('id', shopkeeperId)
-      .single();
-
-    if (error || !shopkeeper) {
-      return res.status(404).json({ error: 'Shopkeeper not found' });
-    }
-
-    if (!shopkeeper.voice_signature) {
-      return res.status(400).json({ 
-        error: 'No voice signature enrolled',
-        needsEnrollment: true 
-      });
-    }
-
-    const storedSignature = JSON.parse(shopkeeper.voice_signature);
-
-    // Calculate MFCC similarity using cosine distance
-    const similarity = calculateMfccSimilarity(storedSignature.mfcc, currentSignature.mfcc);
-    
-    // Threshold for verification (0.60 = 60% similar - more lenient for real-world use)
-    const threshold = 0.60;
-    const verified = similarity >= threshold;
-
-    res.json({
-      verified,
-      similarity: Math.round(similarity * 100) / 100,
-      threshold,
-      confidence: similarity >= 0.80 ? 'high' : similarity >= 0.60 ? 'medium' : 'low',
-      shopkeeperName: shopkeeper.name
-    });
-  } catch (error) {
-    console.error('Voice verification error:', error);
-    res.status(500).json({ error: 'Failed to verify voice', details: error.message });
-  }
-});
-
-/**
- * GET /api/shopkeepers/:id/voice-status
- * Check if shopkeeper has voice enrolled
- */
-router.get('/:id/voice-status', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const supabase = getDatabase();
-
-    const { data: shopkeeper, error } = await supabase
-      .from('shopkeepers')
-      .select('voice_signature, voice_enrolled_at')
-      .eq('id', id)
-      .single();
-
-    if (error || !shopkeeper) {
-      return res.status(404).json({ error: 'Shopkeeper not found' });
-    }
-
-    const hasVoiceEnrolled = !!shopkeeper.voice_signature;
-    
-    // Check if enrolled today
-    let enrolledToday = false;
-    if (shopkeeper.voice_enrolled_at) {
-      const enrolledDate = new Date(shopkeeper.voice_enrolled_at).toDateString();
-      const today = new Date().toDateString();
-      enrolledToday = enrolledDate === today;
-    }
-
-    // Parse and return the voice signature for client-side verification
-    let voiceSignature = null;
-    if (shopkeeper.voice_signature) {
-      try {
-        voiceSignature = JSON.parse(shopkeeper.voice_signature);
-      } catch (e) {
-        console.log('Failed to parse voice signature:', e);
-      }
-    }
-
-    res.json({
-      hasVoiceEnrolled,
-      enrolledToday,
-      enrolledAt: shopkeeper.voice_enrolled_at,
-      voiceSignature // Include for client-side comparison
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to get voice status', details: error.message });
-  }
-});
-
-/**
- * Calculate cosine similarity between two MFCC vectors
- */
-function calculateMfccSimilarity(mfcc1, mfcc2) {
-  if (!mfcc1 || !mfcc2 || !Array.isArray(mfcc1) || !Array.isArray(mfcc2)) {
-    return 0;
-  }
-
-  let dotProduct = 0;
-  let norm1 = 0;
-  let norm2 = 0;
-
-  const len = Math.min(mfcc1.length, mfcc2.length);
-
-  for (let i = 0; i < len; i++) {
-    dotProduct += mfcc1[i] * mfcc2[i];
-    norm1 += mfcc1[i] * mfcc1[i];
-    norm2 += mfcc2[i] * mfcc2[i];
-  }
-
-  const denominator = Math.sqrt(norm1) * Math.sqrt(norm2);
-  
-  if (denominator === 0) return 0;
-  
-  return dotProduct / denominator;
-}
-
-/**
- * POST /api/shopkeepers/verify-pitch
- */
-router.post('/verify-pitch', async (req, res) => {
-  try {
-    const { shopkeeperId, currentPitch } = req.body;
-
-    if (!shopkeeperId || !currentPitch) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const supabase = getDatabase();
-
-    const { data: shopkeeper, error } = await supabase
-      .from('shopkeepers')
-      .select('pitch_signature')
-      .eq('id', shopkeeperId)
-      .single();
-
-    if (error || !shopkeeper) {
-      return res.status(404).json({ error: 'Shopkeeper not found' });
-    }
-
-    if (!shopkeeper.pitch_signature) {
-      return res.status(400).json({ error: 'No pitch signature stored' });
-    }
-
-    const storedPitch = JSON.parse(shopkeeper.pitch_signature);
-    const tolerance = 0.15;
-    const lowerBound = storedPitch.frequency * (1 - tolerance);
-    const upperBound = storedPitch.frequency * (1 + tolerance);
-    const isMatch = currentPitch >= lowerBound && currentPitch <= upperBound;
-
-    res.json({
-      verified: isMatch,
-      storedFrequency: storedPitch.frequency,
-      currentFrequency: currentPitch
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to verify pitch', details: error.message });
   }
 });
 

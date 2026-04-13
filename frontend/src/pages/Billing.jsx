@@ -1,15 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Mic, Square, Search, Globe, ShieldCheck, ShieldX } from 'lucide-react'
+import { Plus, Mic, Square, Search, Globe } from 'lucide-react'
 import Navbar from '../components/Navbar'
 import BillItem from '../components/BillItem'
+import VoiceVerifyModal from '../components/VoiceVerifyModal'
 import api from '../api/api'
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
-import { SpeechRecognizer, translateToEnglish, supportedLanguages } from '../utils/speechRecognition'
-import { getVoiceRecorder, compareSignatures } from '../utils/voiceSignature'
+import { SpeechRecognizer, translateToEnglish, supportedLanguages, isMobileDevice, stopActiveRecognition } from '../utils/speechRecognition'
+import { getLocalizedProductName, toTamilText } from '../utils/tamilTransliteration'
+import { getExpiryStatus, getExpiryAlertDays } from '../utils/expiry'
 
 const LOW_STOCK_THRESHOLD = 5
+const EXPIRY_ALERT_DAYS = getExpiryAlertDays()
 
 const normalizeVoiceText = (value = '') => value
   .toLowerCase()
@@ -29,7 +32,7 @@ const NUMBER_WORDS = {
   gyarah: 11, barah: 12, terah: 13, chaudah: 14, pandrah: 15,
   bees: 20, tees: 30, chalis: 40, pachaas: 50,
   // Tamil
-  onnu: 1, rendu: 2, moonu: 3, naalu: 4, anju: 5,
+  onnu: 1, oru: 1, rendu: 2, randu: 2, irandu: 2, moonu: 3, moondru: 3, naalu: 4, anju: 5,
   aaru: 6, yezhu: 7, yettu: 8, ombathu: 9, pathu: 10,
   // Telugu
   okati: 1, moodu: 3, naalugu: 4, aidu: 5,
@@ -63,53 +66,37 @@ const buildDisplayName = (productName = '', productBrand = '') => {
   return productName || productBrand || ''
 }
 
+
 const Billing = () => {
   const navigate = useNavigate()
-  const { auth } = useAuth()
-  const { t } = useLanguage()
+  const { auth, isVoiceVerifiedForSession } = useAuth()
+  const { t, language } = useLanguage()
   const [products, setProducts] = useState([])
   const [billItems, setBillItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedLang, setSelectedLang] = useState('en-IN')
+  const isMobile = useMemo(() => isMobileDevice(), [])
 
   // Voice states
   const [isListening, setIsListening] = useState(false)
   const [voiceStatus, setVoiceStatus] = useState('')
   const [lastAddedProduct, setLastAddedProduct] = useState(null)
   const [lowStockAlerts, setLowStockAlerts] = useState([])
+  const [expiryAlerts, setExpiryAlerts] = useState([])
   const recognizerRef = useRef(null)
   const listeningRef = useRef(false)
+  const pendingActionRef = useRef(null)
   const billItemsRef = useRef([])
   const productsRef = useRef([])
-
-  // Voice verification states
-  const [voiceVerified, setVoiceVerified] = useState(null) // null = not checked, true/false = result
-  const [storedSignature, setStoredSignature] = useState(null)
-  const [verificationEnabled, setVerificationEnabled] = useState(false)
-  const lastVerificationRef = useRef(0)
-
-  useEffect(() => {
-    // Fetch stored voice signature for verification
-    const fetchVoiceSignature = async () => {
-      if (!auth?.shopkeeperId) return
-      
-      try {
-        const response = await api.get(`/shopkeepers/${auth.shopkeeperId}/voice-status`)
-        // Enable if voice signature exists (enrolled this session)
-        if (response.data.hasVoiceEnrolled && response.data.voiceSignature) {
-          setStoredSignature(response.data.voiceSignature)
-          setVerificationEnabled(true)
-          console.log('Voice verification enabled')
-        }
-      } catch (err) {
-        console.log('Voice verification not available:', err.message)
-      }
-    }
-    
-    fetchVoiceSignature()
-  }, [auth])
+  const silenceTimerRef = useRef(null)
+  const restartTimerRef = useRef(null)
+  const lastSpokenTextRef = useRef('')
+  const shouldRestartRef = useRef(false)
+  const lastRestartAtRef = useRef(0)
+  const restartBurstCountRef = useRef(0)
+  const [voiceVerifyOpen, setVoiceVerifyOpen] = useState(false)
 
   const fetchProducts = useCallback(async () => {
     if (!auth?.shopId) return
@@ -121,16 +108,31 @@ const Billing = () => {
       setLowStockAlerts(
         productList.filter(product => Number.isFinite(Number(product.quantity)) && Number(product.quantity) <= LOW_STOCK_THRESHOLD)
       )
+      setExpiryAlerts(
+        productList
+          .map(product => ({ product, expiry: getExpiryStatus(product, EXPIRY_ALERT_DAYS) }))
+          .filter(item => item.expiry)
+      )
     } catch (err) {
-      setError('Failed to fetch products')
+      setError(t('failedToFetchProducts'))
     }
-  }, [auth?.shopId])
+  }, [auth?.shopId, t])
 
   useEffect(() => {
     fetchProducts()
     return () => {
+      shouldRestartRef.current = false
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current)
+        silenceTimerRef.current = null
+      }
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current)
+        restartTimerRef.current = null
+      }
       if (recognizerRef.current) {
         recognizerRef.current.abort()
+        recognizerRef.current = null
       }
     }
   }, [fetchProducts])
@@ -138,6 +140,27 @@ const Billing = () => {
   useEffect(() => {
     billItemsRef.current = billItems
   }, [billItems])
+
+  const requireVoiceVerification = (action) => {
+    if (isVoiceVerifiedForSession()) {
+      action()
+      return
+    }
+    pendingActionRef.current = action
+    setVoiceVerifyOpen(true)
+  }
+
+  const handleVoiceVerified = () => {
+    setVoiceVerifyOpen(false)
+    const action = pendingActionRef.current
+    pendingActionRef.current = null
+    if (action) action()
+  }
+
+  const handleVoiceVerifyCancel = () => {
+    pendingActionRef.current = null
+    setVoiceVerifyOpen(false)
+  }
 
   useEffect(() => {
     productsRef.current = products
@@ -158,10 +181,17 @@ const Billing = () => {
     if (!cleanedText) return null
 
     const words = cleanedText.split(' ').filter(word => word.length > 1)
+    const brandMatches = productsRef.current.filter(product => {
+      const brandText = normalizeVoiceText(product.brand || '')
+      return brandText && searchText.includes(brandText)
+    })
+    const candidates = brandMatches.length > 0 ? brandMatches : productsRef.current
+
     let best = null
     let bestScore = 0
+    let secondBestScore = 0
 
-    for (const product of productsRef.current) {
+    for (const product of candidates) {
       const aliases = buildAliases(product)
       const brandText = normalizeVoiceText(product.brand || '')
       const productText = normalizeVoiceText(product.name || '')
@@ -195,13 +225,19 @@ const Billing = () => {
         }
 
         if (score > bestScore) {
+          secondBestScore = bestScore
           bestScore = score
           best = product
+        } else if (score > secondBestScore) {
+          secondBestScore = score
         }
       }
     }
 
-    return bestScore >= 55 ? best : null
+    const minimumScore = brandMatches.length > 0 ? 60 : 58
+    if (bestScore < minimumScore) return null
+    if (bestScore - secondBestScore < 8) return null
+    return best
   }
 
   const getAvailableQuantity = (product) => {
@@ -222,7 +258,7 @@ const Billing = () => {
 
     if (!canSetQuantity(product, targetQuantity)) {
       const available = getAvailableQuantity(product)
-      setError(`Only ${available} left in stock for ${product.name}`)
+      setError(t('onlyStockLeft', { available, product: localizeName(product.name, product.brand) }))
       return false
     }
 
@@ -247,34 +283,45 @@ const Billing = () => {
 
   // Extract quantity from speech - improved patterns
   const extractQuantity = (text) => {
-    // Work with original text for better extraction
-    let workText = (text || '').trim()
-    
-    console.log(`[QTY] Processing text: "${workText}"`)
+    const workText = (text || '').trim()
+    if (!workText) return { quantity: 1, isExplicit: false }
 
-    // First try: MOST COMMON - "product name number" or "number product name"
-    // This handles: "sakthi sambar powder 2", "2 sakthi sambar powder", etc.
-    const numberMatch = workText.match(/\b(\d+)\b/)
-    if (numberMatch) {
-      const qty = parseInt(numberMatch[1], 10)
-      if (qty > 0 && qty < 1000) {  // Reasonable quantity range
-        console.log(`[QTY] Matched digit pattern: ${qty}`)
-        return qty
-      }
+    const lowerText = workText.toLowerCase()
+
+    const qtyLabelMatch = lowerText.match(/\b(?:qty|quantity)\s*(?:is\s*)?(\d+(?:\.\d+)?)/i)
+    if (qtyLabelMatch) {
+      const qty = Number.parseFloat(qtyLabelMatch[1])
+      if (Number.isFinite(qty) && qty > 0 && qty < 1000) return { quantity: qty, isExplicit: true }
     }
 
-    // Word-based numbers: "two", "three", "ek", "do", etc.
-    const lowerText = workText.toLowerCase()
+    const unitMatch = lowerText.match(/(\d+(?:\.\d+)?)\s*(?:kg|kilo|kilogram|g|gram|grams|l|liter|litre|liters|litres|ml|milliliter|pieces?|pcs?|units?|packets?|packs?)/i)
+    if (unitMatch) {
+      const qty = Number.parseFloat(unitMatch[1])
+      if (Number.isFinite(qty) && qty > 0 && qty < 1000) return { quantity: qty, isExplicit: true }
+    }
+
+    const numericMatches = [...lowerText.matchAll(/\b(\d+(?:\.\d+)?)\b/g)]
+    for (const match of numericMatches) {
+      const index = match.index ?? -1
+      if (index < 0) continue
+      const context = lowerText.slice(Math.max(0, index - 12), index + match[0].length + 12)
+      const isPriceContext = /(?:rs\.?|rupees?|₹|price)/i.test(context)
+      if (isPriceContext) continue
+      const qty = Number.parseFloat(match[1])
+      if (Number.isFinite(qty) && qty > 0 && qty < 1000) return { quantity: qty, isExplicit: true }
+    }
+
     for (const [word, num] of Object.entries(NUMBER_WORDS)) {
       const regex = new RegExp(`\\b${word}\\b`, 'i')
       if (regex.test(lowerText)) {
-        console.log(`[QTY] Matched word pattern "${word}": ${num}`)
-        return num
+        if (/\b(?:price|rs\.?|rupees?|₹)\b/i.test(lowerText)) {
+          continue
+        }
+        return { quantity: num, isExplicit: true }
       }
     }
 
-    console.log(`[QTY] No quantity found, defaulting to 1`)
-    return 1
+    return { quantity: 1, isExplicit: false }
   }
 
   const handleAddProduct = (product, quantity = 1) => {
@@ -282,21 +329,21 @@ const Billing = () => {
     if (!added) return
 
     // Show feedback
-    setLastAddedProduct(buildDisplayName(product.name, product.brand))
+    setLastAddedProduct({ name: product.name, brand: product.brand })
     setTimeout(() => setLastAddedProduct(null), 2000)
   }
 
-  const startVoiceBilling = async () => {
+  const startVoiceBillingInternal = async () => {
+    setError('')
+    setVoiceStatus('')
+    
     try {
-      let silenceTimer = null;
-      let lastSpokenText = '';
-
-      // Start continuous voice recording for verification
-      const voiceRecorder = getVoiceRecorder()
-      const recorderStarted = await voiceRecorder.start()
-      if (recorderStarted) {
-        console.log('Voice recorder started for verification')
-      }
+      stopActiveRecognition()
+      shouldRestartRef.current = true
+      restartBurstCountRef.current = 0
+      lastRestartAtRef.current = Date.now()
+      setVoiceStatus(t('listening'))
+      lastSpokenTextRef.current = ''
 
       const recognizer = new SpeechRecognizer({
         lang: selectedLang,
@@ -305,51 +352,107 @@ const Billing = () => {
         onStart: () => {
           listeningRef.current = true
           setIsListening(true)
-          setVoiceStatus(t('listening'))
           setError('')
-          // Clear any previous voice data
-          voiceRecorder.clear()
+          console.log('Billing speech recognition started')
         },
         onResult: (result) => {
-          // Clear existing timer
-          if (silenceTimer) clearTimeout(silenceTimer);
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+          }
 
           if (result.isFinal && result.final.trim()) {
             const spokenText = translateToEnglish(result.final.trim())
-            lastSpokenText = spokenText
-            setVoiceStatus(`Heard: "${spokenText}"`)
+            lastSpokenTextRef.current = spokenText
+            setVoiceStatus(t('voiceHeard', { text: spokenText }))
 
-            // Detect pause - if no speech for 1 second, process it
-            silenceTimer = setTimeout(async () => {
-              if (lastSpokenText) {
-                await processVoiceBilling(lastSpokenText)
-                lastSpokenText = ''
-                // Clear voice data for next command
-                voiceRecorder.clear()
+            // Process after 1 second pause
+            silenceTimerRef.current = setTimeout(async () => {
+              if (lastSpokenTextRef.current) {
+                const pendingText = lastSpokenTextRef.current
+                lastSpokenTextRef.current = ''
+                console.log('Processing billing:', pendingText)
+                await processVoiceBilling(pendingText)
               }
-            }, 1000) // 1 second pause for billing
+            }, 1000)
           }
         },
         onError: (err) => {
+          console.error('Billing speech error:', err)
           if (err === 'not-allowed') {
-            setError('Please allow microphone access')
+            setError(t('micAccessDenied'))
+          } else if (err === 'audio-capture') {
+            setError(t('micBusy'))
+          } else if (err === 'no-speech') {
+            // Ignore, it's normal
+            console.log('No speech detected')
+          } else {
+            setError(`${t('speechError')}: ${err}`)
           }
-          listeningRef.current = false
-          setIsListening(false)
-          setVoiceStatus('')
-          if (silenceTimer) clearTimeout(silenceTimer)
+          
+          // On mobile, transient audio errors are common. Keep session alive for these.
+          if (!['no-speech', 'aborted', 'audio-capture'].includes(err)) {
+            shouldRestartRef.current = false
+            listeningRef.current = false
+            setIsListening(false)
+            setVoiceStatus('')
+          }
+          
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+          }
         },
         onEnd: () => {
-          // Auto-restart for continuous listening
-          if (silenceTimer) clearTimeout(silenceTimer)
-          if (listeningRef.current && recognizerRef.current) {
-            try {
-              recognizerRef.current.start()
-            } catch (e) {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+          }
+
+          // Controlled restart to avoid rapid on/off loops on mobile.
+          if (shouldRestartRef.current && recognizerRef.current) {
+            const now = Date.now()
+            const sinceLastRestart = now - lastRestartAtRef.current
+            const maxBurst = isMobile ? 50 : 6
+            if (sinceLastRestart < 4000) {
+              restartBurstCountRef.current += 1
+            } else {
+              restartBurstCountRef.current = 1
+            }
+
+            if (restartBurstCountRef.current >= maxBurst) {
+              shouldRestartRef.current = false
               listeningRef.current = false
               setIsListening(false)
               setVoiceStatus('')
+              setError(t('voiceRestartStopped'))
+              return
             }
+
+            const restartDelay = sinceLastRestart < 1000
+              ? (isMobile ? 900 : 1200)
+              : (isMobile ? 500 : 600)
+            if (restartTimerRef.current) {
+              clearTimeout(restartTimerRef.current)
+            }
+
+            restartTimerRef.current = setTimeout(() => {
+              if (!shouldRestartRef.current || !recognizerRef.current) return
+              try {
+                lastRestartAtRef.current = Date.now()
+                recognizerRef.current.start()
+              } catch (e) {
+                console.error('Failed to restart:', e)
+                shouldRestartRef.current = false
+                listeningRef.current = false
+                setIsListening(false)
+                setVoiceStatus('')
+              }
+            }, restartDelay)
+          } else {
+            listeningRef.current = false
+            setIsListening(false)
+            setVoiceStatus('')
           }
         }
       })
@@ -357,9 +460,22 @@ const Billing = () => {
       recognizer.init()
       recognizer.start()
       recognizerRef.current = recognizer
+      
     } catch (err) {
-      setError('Speech recognition not supported. Use Chrome or Edge.')
+      console.error('Start billing voice error:', err)
+      if (err?.message === 'SPEECH_UNSUPPORTED') {
+        setError(`${t('voiceStartFailed')}. ${t('useChrome')}`)
+      } else {
+        setError(t('voiceStartFailed'))
+      }
+      setVoiceStatus('')
     }
+  }
+
+  const startVoiceBilling = () => {
+    requireVoiceVerification(() => {
+      startVoiceBillingInternal()
+    })
   }
 
   const processSingleVoiceSegment = async (segment) => {
@@ -368,7 +484,7 @@ const Billing = () => {
 
     if (/\b(clear|reset)\s+bill\b/i.test(normalized)) {
       setBillItems([])
-      return { matched: true, status: 'Bill cleared' }
+      return { matched: true, status: t('billCleared') }
     }
 
     if (/\b(remove|delete)\b/i.test(normalized)) {
@@ -377,18 +493,18 @@ const Billing = () => {
         setBillItems(prev => prev.filter(item => item.productId !== productToRemove.id))
         return {
           matched: true,
-          status: `Removed: ${buildDisplayName(productToRemove.name, productToRemove.brand)}`
+          status: `${t('removed')}: ${localizeName(productToRemove.name, productToRemove.brand)}`
         }
       }
     }
 
     const localMatch = findProduct(normalized)
     if (localMatch) {
-      const quantity = extractQuantity(normalized)
-      handleAddProduct(localMatch, quantity)
+      const quantityInfo = extractQuantity(segment)
+      handleAddProduct(localMatch, quantityInfo.quantity)
       return {
         matched: true,
-        status: `${t('added')}: ${buildDisplayName(localMatch.name, localMatch.brand)} x${quantity}`
+        status: `${t('added')}: ${localizeName(localMatch.name, localMatch.brand)} x${quantityInfo.quantity}`
       }
     }
 
@@ -409,13 +525,18 @@ const Billing = () => {
       const aiAction = response.data?.action === 'remove' ? 'remove' : 'add'
 
       let matchedAny = false
+      const quantityInfo = extractQuantity(segment)
       for (const aiItem of aiItems) {
         const product = findProduct(aiItem.productName || '')
         if (product) {
+          const aiQty = Number(aiItem.quantity)
+          const quantityToAdd = quantityInfo.isExplicit
+            ? quantityInfo.quantity
+            : (Number.isFinite(aiQty) && aiQty > 0 ? aiQty : quantityInfo.quantity)
           if (aiAction === 'remove') {
             setBillItems(prev => prev.filter(item => item.productId !== product.id))
           } else {
-            handleAddProduct(product, Number(aiItem.quantity) || 1)
+            handleAddProduct(product, quantityToAdd)
           }
           matchedAny = true
         }
@@ -425,57 +546,25 @@ const Billing = () => {
         return {
           matched: true,
           status: aiAction === 'remove'
-            ? `Removed: ${aiItems.map(item => item.productName).join(', ')}`
-            : `${t('added')}: ${aiItems.map(item => `${item.productName} x${Number(item.quantity) || 1}`).join(', ')}`
+            ? `${t('removed')}: ${aiItems.map(item => localizeName(item.productName, '')).join(', ')}`
+            : `${t('added')}: ${aiItems.map(item => {
+              const fallbackQty = quantityInfo.isExplicit ? quantityInfo.quantity : 1
+              const aiValue = Number(item.quantity)
+              const displayQty = Number.isFinite(aiValue) && aiValue > 0 ? aiValue : fallbackQty
+              return `${localizeName(item.productName, '')} x${displayQty}`
+            }).join(', ')}`
         }
       }
 
-      return { matched: false, status: `Product not found: "${segment}"` }
+      return { matched: false, status: t('productNotFound', { segment }) }
     } catch (error) {
-      return { matched: false, status: `Product not found: "${segment}"` }
+      return { matched: false, status: t('productNotFound', { segment }) }
     }
   }
 
   const processVoiceBilling = async (spokenText) => {
     const chunks = splitSpeechIntoChunks(spokenText)
     if (chunks.length === 0) return
-
-    // Voice verification using ALREADY CAPTURED audio
-    if (verificationEnabled && auth?.shopkeeperId && storedSignature) {
-      const voiceRecorder = getVoiceRecorder()
-      const currentSignature = voiceRecorder.getSignature()
-      
-      if (currentSignature) {
-        // Compare locally first for speed
-        const similarity = compareSignatures(storedSignature, currentSignature)
-        console.log(`Voice verification: similarity = ${similarity}`)
-        
-        // With stretched cosine comparison:
-        // Same speaker typically: 0.55-1.0
-        // Different speaker typically: 0.20-0.50
-        const verified = similarity >= 0.65
-        setVoiceVerified(verified)
-        lastVerificationRef.current = Date.now()
-        
-        if (!verified) {
-          setVoiceStatus(`🚫 Voice not recognized (${Math.round(similarity * 100)}% match) - only shopkeeper can add items`)
-          setError('Voice verification failed. This doesn\'t sound like the enrolled shopkeeper.')
-          return // BLOCK - Don't process if voice doesn't match
-        }
-        
-        setVoiceStatus(`✓ Voice verified (${Math.round(similarity * 100)}%) - processing...`)
-      } else {
-        // No voice captured - might be too quiet
-        console.log('No voice signature captured - voice too quiet?')
-        setVoiceStatus('⚠️ Voice too quiet - speak louder')
-        // Still allow if we previously verified (within time window)
-        const now = Date.now()
-        if (voiceVerified !== true || now - lastVerificationRef.current > 30000) {
-          setError('Please speak louder for voice verification')
-          return // BLOCK
-        }
-      }
-    }
 
     const statuses = []
     for (const chunk of chunks) {
@@ -489,17 +578,25 @@ const Billing = () => {
   }
 
   const stopVoiceBilling = () => {
+    shouldRestartRef.current = false
     listeningRef.current = false
+    lastSpokenTextRef.current = ''
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current)
+      restartTimerRef.current = null
+    }
     if (recognizerRef.current) {
       recognizerRef.current.abort()
       recognizerRef.current = null
     }
-    // Stop the voice recorder
-    const voiceRecorder = getVoiceRecorder()
-    voiceRecorder.stop()
     
     setIsListening(false)
     setVoiceStatus('')
+    
   }
 
   const handleQuantityChange = (productId, quantity) => {
@@ -511,7 +608,7 @@ const Billing = () => {
     const product = products.find(item => item.id === productId)
     if (product && !canSetQuantity(product, quantity)) {
       const available = getAvailableQuantity(product)
-      setError(`Only ${available} left in stock for ${product.name}`)
+      setError(t('onlyStockLeft', { available, product: localizeName(product.name, product.brand) }))
       return
     }
 
@@ -525,9 +622,9 @@ const Billing = () => {
     setBillItems(billItems.filter(item => item.productId !== productId))
   }
 
-  const handleCreateBill = async () => {
+  const createBill = async () => {
     if (billItems.length === 0) {
-      setError('Bill must have at least one item')
+      setError(t('billNeedsItem'))
       return
     }
 
@@ -549,32 +646,76 @@ const Billing = () => {
 
       const response = await api.post('/bills', billData)
       const lowStock = response.data.low_stock_alerts || []
-      navigate('/bills', { state: { newBillId: response.data.bill?.id || response.data.bill_id, lowStockAlerts: lowStock } })
+      const expiryAlertPayload = expiryAlerts.map(entry => {
+        const product = entry.product
+        return {
+          productId: product.id,
+          productName: product.name,
+          productBrand: product.brand || '',
+          expiryDate: product.expiry_date,
+          status: entry.expiry?.status || 'near',
+          daysLeft: entry.expiry?.daysLeft ?? null
+        }
+      })
+      navigate('/bills', {
+        state: {
+          newBillId: response.data.bill?.id || response.data.bill_id,
+          lowStockAlerts: lowStock,
+          expiryAlerts: expiryAlertPayload
+        }
+      })
     } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to create bill')
+      setError(err.response?.data?.error || err.response?.data?.message || t('billCreateFailed'))
     } finally {
       setLoading(false)
     }
   }
 
+  const handleCreateBill = () => {
+    requireVoiceVerification(() => {
+      createBill()
+    })
+  }
+
   // Filter products by search
-  const filteredProducts = products.filter(p =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (p.brand && p.brand.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    (Array.isArray(p.synonyms) && p.synonyms.some(syn => syn.toLowerCase().includes(searchQuery.toLowerCase())))
-  )
+  const filteredProducts = products.filter(p => {
+    const query = searchQuery.toLowerCase()
+    if (!query) return true
+    return (
+      p.name.toLowerCase().includes(query) ||
+      (p.brand && p.brand.toLowerCase().includes(query)) ||
+      (Array.isArray(p.synonyms) && p.synonyms.some(syn => syn.toLowerCase().includes(query)))
+    )
+  })
 
   const totalAmount = billItems.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+  const localizeName = (name, brand) => getLocalizedProductName(name, brand, language)
+  const localizeText = (value) => (language === 'ta' ? toTamilText(value || '') : value || '')
+  const lastAddedDisplay = lastAddedProduct
+    ? localizeName(lastAddedProduct.name || '', lastAddedProduct.brand || '')
+    : ''
+  const expiredItems = expiryAlerts.filter(entry => entry.expiry?.status === 'expired')
+  const nearExpiryItems = expiryAlerts.filter(entry => entry.expiry?.status === 'near')
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-4xl font-bold text-gray-800">{t('createBill')}</h1>
+      <VoiceVerifyModal
+        open={voiceVerifyOpen}
+        onSuccess={handleVoiceVerified}
+        onCancel={handleVoiceVerifyCancel}
+        threshold={0.3}
+      />
 
-          <div className="flex items-center gap-3">
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-800">{t('createBill')}</h1>
+            <p className="text-sm text-gray-500 mt-1">{t('sayProductNames')}</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
               <Globe size={16} className="text-gray-500" />
               <select
@@ -592,7 +733,7 @@ const Billing = () => {
             {!isListening ? (
               <button
                 onClick={startVoiceBilling}
-                className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition"
+                className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-blue-500 hover:from-emerald-600 hover:to-blue-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition"
               >
                 <Mic size={24} />
                 {t('voiceBilling')}
@@ -600,46 +741,36 @@ const Billing = () => {
             ) : (
               <button
                 onClick={stopVoiceBilling}
-                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg transition animate-pulse"
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full font-semibold shadow-lg transition animate-pulse"
               >
                 <Square size={24} />
                 {t('stopVoice')}
               </button>
+            )}
+
+            {isMobile && (
+              <span className="text-xs text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-full">
+                {t('mobileVoiceHint')}
+              </span>
             )}
           </div>
         </div>
 
         {/* Voice Status Banner */}
         {isListening && (
-          <div className="bg-gradient-to-r from-emerald-100 to-blue-100 border-2 border-emerald-400 p-4 rounded-xl mb-6 flex items-center gap-4">
+          <div className="bg-gradient-to-r from-emerald-100 to-blue-100 border border-emerald-200 p-4 rounded-2xl mb-6 flex items-center gap-4 shadow-sm">
             <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
             <div className="flex-1">
               <p className="font-semibold text-emerald-800">{voiceStatus || t('listening')}</p>
               <p className="text-sm text-emerald-600">{t('sayProductNames')}</p>
             </div>
-            {/* Voice verification indicator */}
-            {verificationEnabled && (
-              <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
-                voiceVerified === true ? 'bg-green-100 text-green-700' :
-                voiceVerified === false ? 'bg-red-100 text-red-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>
-                {voiceVerified === true ? (
-                  <><ShieldCheck size={16} /> Voice verified</>
-                ) : voiceVerified === false ? (
-                  <><ShieldX size={16} /> Unknown voice</>
-                ) : (
-                  <><ShieldCheck size={16} /> Verifying...</>
-                )}
-              </div>
-            )}
           </div>
         )}
 
         {/* Added Product Notification */}
         {lastAddedProduct && (
-          <div className="fixed top-20 right-4 bg-green-500 text-white px-6 py-3 rounded-xl shadow-lg animate-bounce z-50">
-            {t('added')}: {lastAddedProduct}
+          <div className="fixed top-20 right-4 max-w-[90vw] bg-green-600 text-white px-4 py-3 rounded-2xl shadow-lg animate-bounce z-50">
+            {t('added')}: {lastAddedDisplay}
           </div>
         )}
 
@@ -650,29 +781,57 @@ const Billing = () => {
         )}
 
         {lowStockAlerts.length > 0 && (
-          <div className="bg-amber-50 border border-amber-400 text-amber-800 px-4 py-3 rounded-lg mb-6">
-            <p className="font-semibold mb-1">Low stock alert</p>
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-2xl mb-6">
+            <p className="font-semibold mb-1">{t('lowStockAlertTitle')}</p>
             <p className="text-sm">
-              {lowStockAlerts.map(product => `${product.name} (${product.quantity})`).join(', ')}
+              {lowStockAlerts
+                .map(product => t('lowStockAlertItem', {
+                  name: localizeName(product.name, product.brand),
+                  qty: product.quantity
+                }))
+                .join(', ')}
             </p>
           </div>
         )}
 
+        {expiryAlerts.length > 0 && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-900 px-4 py-3 rounded-2xl mb-6">
+            <p className="font-semibold mb-1">{t('expiryAlertTitle', { days: EXPIRY_ALERT_DAYS })}</p>
+            {expiredItems.length > 0 && (
+              <p className="text-sm mb-1">
+                {t('expiredLabel')}: {expiredItems
+                  .map(entry => localizeName(entry.product.name, entry.product.brand))
+                  .join(', ')}
+              </p>
+            )}
+            {nearExpiryItems.length > 0 && (
+              <p className="text-sm">
+                {t('expiringSoonLabel')}: {nearExpiryItems
+                  .map(entry => t('expiringItem', {
+                    name: localizeName(entry.product.name, entry.product.brand),
+                    days: entry.expiry?.daysLeft
+                  }))
+                  .join(', ')}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-              <div className="flex items-center justify-between mb-4">
+          <div className="lg:col-span-2 min-w-0">
+            <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <h2 className="text-2xl font-bold text-gray-800">{t('productsLabel')}</h2>
 
                 {/* Search Box */}
-                <div className="relative">
+                <div className="relative w-full sm:w-auto">
                   <Search size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t('searchProducts')}
-                    className="pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-emerald-500 focus:outline-none"
+                    className="pl-10 pr-4 py-2 border-2 border-gray-200 rounded-full focus:border-emerald-500 focus:outline-none w-full sm:w-72"
                   />
                 </div>
               </div>
@@ -682,32 +841,42 @@ const Billing = () => {
                   {products.length === 0 ? t('noProducts') : t('noMatchingProducts')}
                 </p>
               ) : (
-                <div className="grid sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto">
-                  {filteredProducts.map(product => (
+                <div className="grid sm:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto overflow-x-hidden">
+                  {filteredProducts.map(product => {
+                    const expiryInfo = getExpiryStatus(product, EXPIRY_ALERT_DAYS)
+                    return (
                     <button
                       key={product.id}
                       onClick={() => handleAddProduct(product)}
-                      className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border-2 border-gray-200 hover:border-emerald-500 hover:bg-emerald-50 transition text-left"
+                      className="flex items-center justify-between bg-gray-50 p-4 rounded-2xl border-2 border-gray-200 hover:border-emerald-500 hover:bg-emerald-50 transition text-left"
                     >
                       <div className="flex-1">
-                        <p className="font-semibold text-gray-800">{product.name}</p>
+                        <p className="font-semibold text-gray-800">{localizeName(product.name, product.brand)}</p>
                         <p className="text-sm text-gray-600">
-                          {product.brand && `${product.brand} • `}Rs.{product.price}
+                          {product.brand && `${localizeText(product.brand)} • `}{t('currency')}{product.price}
                         </p>
                         {Number.isFinite(Number(product.quantity)) && Number(product.quantity) <= LOW_STOCK_THRESHOLD && (
-                          <p className="text-xs text-amber-700 font-semibold">Low stock: {product.quantity}</p>
+                          <p className="text-xs text-amber-700 font-semibold">{t('lowStockInline', { qty: product.quantity })}</p>
+                        )}
+                        {expiryInfo?.status === 'expired' && (
+                          <p className="text-xs text-rose-700 font-semibold">{t('expiredLabel')}</p>
+                        )}
+                        {expiryInfo?.status === 'near' && (
+                          <p className="text-xs text-rose-600 font-semibold">
+                            {t('expiringInDays', { days: expiryInfo?.daysLeft })}
+                          </p>
                         )}
                       </div>
                       <Plus size={24} className="text-emerald-600" />
                     </button>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
           </div>
 
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow-lg p-6 sticky top-20">
+          <div className="lg:col-span-1 min-w-0">
+            <div className="bg-white rounded-2xl shadow-lg p-6 sticky top-20 border border-gray-100">
               <h2 className="text-2xl font-bold text-gray-800 mb-4">{t('billSummary')}</h2>
 
               {billItems.length === 0 ? (
@@ -716,7 +885,7 @@ const Billing = () => {
                   <p className="text-sm text-gray-400">{t('clickOrVoice')}</p>
                 </div>
               ) : (
-                <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                <div className="space-y-3 max-h-[300px] overflow-y-auto overflow-x-hidden">
                   {billItems.map(item => (
                     <BillItem
                       key={item.productId}
@@ -728,20 +897,20 @@ const Billing = () => {
                 </div>
               )}
 
-              <div className="border-t-2 border-gray-200 mt-4 pt-4">
+              <div className="border-t border-gray-200 mt-4 pt-4">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-gray-600">{t('items')}:</span>
                   <span className="font-bold">{billItems.reduce((sum, item) => sum + item.quantity, 0)}</span>
                 </div>
                 <div className="flex justify-between items-center text-2xl font-bold text-emerald-600 mb-4">
                   <span>{t('total')}:</span>
-                  <span>Rs.{totalAmount.toFixed(2)}</span>
+                  <span>{t('currency')}{totalAmount.toFixed(2)}</span>
                 </div>
 
                 <button
                   onClick={handleCreateBill}
                   disabled={billItems.length === 0 || loading}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 hover:shadow-lg text-white font-bold py-4 rounded-xl transition disabled:opacity-50 text-lg"
+                  className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 hover:shadow-lg text-white font-bold py-4 rounded-full transition disabled:opacity-50 text-lg"
                 >
                   {loading ? t('processing') : t('createBillBtn')}
                 </button>

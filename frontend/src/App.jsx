@@ -7,6 +7,7 @@ import RegisterShopkeeper from './pages/RegisterShopkeeper'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Products from './pages/Products'
+import PriceUpdate from './pages/PriceUpdate'
 import Billing from './pages/Billing'
 import Bills from './pages/Bills'
 import Reports from './pages/Reports'
@@ -24,6 +25,7 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
+            <Route path="/price-update" element={<ProtectedRoute><PriceUpdate /></ProtectedRoute>} />
             <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
             <Route path="/bills" element={<ProtectedRoute><Bills /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />

@@ -49,7 +49,6 @@ app.use('/api/shops', require('./routes/shops'));
 app.use('/api/shopkeepers', require('./routes/shopkeepers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/bills', require('./routes/bills'));
-app.use('/api/daily-codes', require('./routes/dailyCodes'));
 app.use('/api/ai-parse', require('./routes/ai-parse'));
 app.use('/api/reports', require('./routes/reports'));
 

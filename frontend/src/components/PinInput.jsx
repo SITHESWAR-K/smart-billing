@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLanguage } from '../context/LanguageContext'
 
 const PinInput = ({ onComplete, disabled = false }) => {
+  const { t } = useLanguage()
   const [pin, setPin] = useState(['', '', '', ''])
   const [hasError, setHasError] = useState(false)
   const inputRefs = useRef([])
@@ -91,7 +93,7 @@ const PinInput = ({ onComplete, disabled = false }) => {
           />
         ))}
       </div>
-      <p className="text-gray-500 text-sm">Enter 4-digit PIN</p>
+      <p className="text-gray-500 text-sm">{t('pinHint')}</p>
     </div>
   )
 }

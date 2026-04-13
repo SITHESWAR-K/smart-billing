@@ -1,13 +1,19 @@
 import { Trash2 } from 'lucide-react'
+import { useLanguage } from '../context/LanguageContext'
+import { getLocalizedProductName } from '../utils/tamilTransliteration'
 
 const BillItem = ({ item, onQuantityChange, onRemove }) => {
-  const displayName = item.displayName || [item.productBrand, item.productName].filter(Boolean).join(' ') || item.productName
+  const { t, language } = useLanguage()
+  const rawName = item.displayName || [item.productBrand, item.productName].filter(Boolean).join(' ') || item.productName
+  const displayName = language === 'ta'
+    ? getLocalizedProductName(item.productName, item.productBrand, language) || rawName
+    : rawName
 
   return (
     <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-200">
       <div className="flex-1">
         <p className="font-semibold">{displayName}</p>
-        <p className="text-sm text-gray-600">Rs.{item.price} each</p>
+        <p className="text-sm text-gray-600">{t('currency')}{item.price} {t('each')}</p>
       </div>
       <div className="flex items-center gap-3 mx-4">
         <button
@@ -25,7 +31,7 @@ const BillItem = ({ item, onQuantityChange, onRemove }) => {
         </button>
       </div>
       <div className="text-right">
-        <p className="font-bold text-lg text-emerald-600">Rs.{(item.price * item.quantity).toFixed(2)}</p>
+        <p className="font-bold text-lg text-emerald-600">{t('currency')}{(item.price * item.quantity).toFixed(2)}</p>
       </div>
       <button
         onClick={() => onRemove(item.productId)}

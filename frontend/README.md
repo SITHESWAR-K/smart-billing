@@ -1,15 +1,14 @@
 # Smart Billing Frontend
 
-A modern React + Vite frontend application for a voice-authenticated billing system. This application provides a complete billing solution with dual verification, product management, and voice-based security features.
+A modern React + Vite frontend application for voice-enabled billing and product management.
 
 ## 🚀 Features
 
-- **Voice-Authenticated Billing**: Uses Web Audio API for voice verification
-- **Pitch Detection**: Real-time pitch frequency extraction for voice verification
+- **Voice Billing**: Uses browser speech recognition to add items by voice
 - **Product Management**: Add, edit, and delete products (Main shopkeeper only)
-- **Billing System**: Create bills with dual verification
+- **Billing System**: Create bills with voice or manual selection
 - **Role-Based Access**: Main and Alternative shopkeeper roles
-- **Daily Code Generation**: Rotating daily code for additional security
+- **Voice Product Upsert**: "name qty price" commands update existing or add new
 - **Protected Routes**: Secure authentication and authorization
 - **Responsive Design**: Works on desktop and mobile devices
 - **Beautiful UI**: TailwindCSS styling with indigo/purple theme
@@ -42,16 +41,13 @@ frontend/
 │   ├── components/
 │   │   ├── ProtectedRoute.jsx   # Protected route wrapper
 │   │   ├── Navbar.jsx           # Navigation bar
-│   │   ├── DailyCode.jsx        # Daily code display component
 │   │   ├── PinInput.jsx         # 4-digit PIN input component
 │   │   ├── VoiceRecorder.jsx    # Audio recording component
-│   │   ├── VoiceVerification.jsx # Voice verification component
 │   │   ├── ProductCard.jsx      # Product card component
 │   │   └── BillItem.jsx         # Bill item component
 │   │
 │   └── utils/
-│       ├── pitchDetection.js    # Web Audio API pitch detection
-│       └── generateDailyCode.js # Daily code generation
+│       └── speechRecognition.js # Speech recognition and parsing helpers
 │
 ├── public/                       # Static assets
 ├── index.html                   # HTML entry point
@@ -126,16 +122,11 @@ Axios instance configured with:
 - Authorization header injection
 - Request/response interceptors
 
-### Pitch Detection
-Web Audio API implementation for:
-- Real-time pitch frequency extraction
-- Magnitude detection
-- Frequency range validation
-
-### Daily Code Generator
-- Generates unique 6-digit codes based on current date
-- Updates every 24 hours
-- Used for additional security layer
+### Voice Recognition
+Browser Web Speech API implementation for:
+- Live speech recognition
+- Product command parsing (name/quantity/price)
+- Multi-language speech input
 
 ## 🎨 Styling
 
@@ -150,9 +141,8 @@ All components are fully responsive and work across all device sizes.
 
 1. **Protected Routes**: Unauthenticated users redirected to login
 2. **Token-Based Auth**: JWT tokens stored in localStorage
-3. **Voice Verification**: Pitch-based voice authentication
-4. **PIN Protection**: 4-digit PIN for shopkeeper access
-5. **Role-Based Access**: Different permissions for Main/Alternative roles
+3. **PIN Protection**: 4-digit PIN for shopkeeper access
+4. **Role-Based Access**: Different permissions for Main/Alternative roles
 
 ## 📝 API Integration
 
@@ -193,12 +183,11 @@ The frontend communicates with the backend API at `http://localhost:5000/api` wi
 ### Billing Process
 1. View available products
 2. Add items to bill
-3. Verify with voice authentication (pitch detection)
-4. Submit bill
+3. Submit bill
 
 ### Product Management (Main Shopkeeper Only)
 1. View all products
-2. Add new products with voice input option
+2. Add or update products with voice input option
 3. Edit existing products
 4. Delete products
 

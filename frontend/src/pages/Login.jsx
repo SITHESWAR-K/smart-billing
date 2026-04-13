@@ -7,26 +7,30 @@ import api from '../api/api'
 import PinInput from '../components/PinInput'
 import LanguageToggle from '../components/LanguageToggle'
 import VoiceEnrollment from '../components/VoiceEnrollment'
+import { getDailyVoiceCode } from '../utils/voiceSignature'
 
 const Login = () => {
   const navigate = useNavigate()
   const { login } = useAuth()
   const { t } = useLanguage()
-  const [step, setStep] = useState('shopId') // shopId, role, selectName, pin, voiceEnroll
+  const [step, setStep] = useState('shopId') // shopId, role, selectName, pin
   const [shopId, setShopId] = useState('')
   const [shopInfo, setShopInfo] = useState(null)
   const [role, setRole] = useState('main')
   const [shopkeeperInfo, setShopkeeperInfo] = useState(null)
   const [alternativeShopkeepers, setAlternativeShopkeepers] = useState([]) // For multiple alternatives
+  const [pendingAuth, setPendingAuth] = useState(null)
+  const [voiceMode, setVoiceMode] = useState('verify')
+  const [voiceSignature, setVoiceSignature] = useState(null)
+  const [dailyVoiceCode, setDailyVoiceCode] = useState('')
+  const [voiceSaving, setVoiceSaving] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [dailyCode, setDailyCode] = useState('')
-  const [pendingLoginData, setPendingLoginData] = useState(null) // Store login data during voice enrollment
 
   const handleShopIdSubmit = async (e) => {
     e.preventDefault()
     if (!shopId.trim()) {
-      setError('Please enter your Shop ID')
+      setError(t('enterShopIdError'))
       return
     }
 
@@ -65,7 +69,8 @@ const Login = () => {
         setStep('pin')
       }
     } catch (err) {
-      setError(`No ${selectedRole} shopkeeper found for this shop.`)
+      const roleLabel = selectedRole === 'main' ? t('mainShopkeeper') : t('alternativeShopkeeper')
+      setError(t('noShopkeeperFound', { role: roleLabel }))
     } finally {
       setLoading(false)
     }
@@ -87,29 +92,23 @@ const Login = () => {
       })
 
       const { token, shop } = response.data
-      
-      // Store login data for after voice enrollment
-      const loginData = { 
-        shopId, 
-        shopName: shop.name, 
-        shopkeeperName: shopkeeperInfo.name, 
-        role, 
+
+      const voiceSignatureValue = response.data?.shopkeeper?.voice_signature || null
+      const nextMode = 'enroll'
+
+      setPendingAuth({
+        shopId,
+        shopName: shop.name,
+        name: shopkeeperInfo.name,
+        role,
         token,
-        shopkeeperId: shopkeeperInfo.id 
-      }
-      
-      // Always require voice enrollment on every login for security
-      try {
-        const codeResponse = await api.get(`/daily-codes/${shopId}`)
-        setDailyCode(codeResponse.data.code)
-        setPendingLoginData(loginData)
-        setStep('voiceEnroll')
-      } catch (codeErr) {
-        // If daily code fetch fails, still proceed with enrollment using a generated code
-        setDailyCode(Math.random().toString(36).substring(2, 8).toUpperCase())
-        setPendingLoginData(loginData)
-        setStep('voiceEnroll')
-      }
+        shopkeeperId: shopkeeperInfo.id,
+        voiceEnrolledAt: response.data?.shopkeeper?.voice_enrolled_at || null
+      })
+      setVoiceSignature(voiceSignatureValue)
+      setVoiceMode(nextMode)
+      setDailyVoiceCode(getDailyVoiceCode(`${shopId}-${shopkeeperInfo.id}`))
+      setStep('voice')
     } catch (err) {
       setError(t('wrongPin'))
     } finally {
@@ -117,67 +116,66 @@ const Login = () => {
     }
   }
 
-  const handleVoiceEnrollmentComplete = async (voiceSignature) => {
-    try {
-      // Save voice signature to backend
-      await api.post('/shopkeepers/enroll-voice', {
-        shopkeeperId: pendingLoginData.shopkeeperId,
-        voiceSignature
-      })
-      
-      // Complete login
-      login(
-        pendingLoginData.shopId, 
-        pendingLoginData.shopName, 
-        pendingLoginData.shopkeeperName, 
-        pendingLoginData.role, 
-        pendingLoginData.token,
-        pendingLoginData.shopkeeperId
-      )
-      navigate('/dashboard')
-    } catch (err) {
-      console.error('Voice enrollment save failed:', err)
-      // Still proceed with login even if save fails
-      login(
-        pendingLoginData.shopId, 
-        pendingLoginData.shopName, 
-        pendingLoginData.shopkeeperName, 
-        pendingLoginData.role, 
-        pendingLoginData.token,
-        pendingLoginData.shopkeeperId
-      )
-      navigate('/dashboard')
-    }
-  }
-
-  const handleVoiceEnrollmentSkip = () => {
-    // Proceed without voice enrollment
+  const finalizeLogin = (signatureOverride, enrolledAtOverride) => {
+    if (!pendingAuth) return
+    const resolvedSignature = signatureOverride ?? voiceSignature
+    const resolvedEnrolledAt = enrolledAtOverride ?? pendingAuth.voiceEnrolledAt ?? null
     login(
-      pendingLoginData.shopId, 
-      pendingLoginData.shopName, 
-      pendingLoginData.shopkeeperName, 
-      pendingLoginData.role, 
-      pendingLoginData.token,
-      pendingLoginData.shopkeeperId
+      pendingAuth.shopId,
+      pendingAuth.shopName,
+      pendingAuth.name,
+      pendingAuth.role,
+      pendingAuth.token,
+      pendingAuth.shopkeeperId,
+      {
+        voiceSignature: resolvedSignature,
+        voiceEnrolledAt: resolvedEnrolledAt
+      }
     )
     navigate('/dashboard')
   }
 
+  const handleVoiceSuccess = async ({ serialized }) => {
+    if (voiceMode !== 'enroll') {
+      finalizeLogin(serialized)
+      return
+    }
+
+    try {
+      setVoiceSaving(true)
+      const response = await api.post('/shopkeepers/voice-enroll', {
+        shopkeeperId: pendingAuth.shopkeeperId,
+        voiceSignature: serialized
+      })
+      const enrolledAt = response.data?.shopkeeper?.voice_enrolled_at || new Date().toISOString()
+      setVoiceSignature(serialized)
+      setPendingAuth(prev => ({ ...prev, voiceEnrolledAt: enrolledAt }))
+      finalizeLogin(serialized, enrolledAt)
+    } catch (err) {
+      setError(t('voiceEnrollFail'))
+      setVoiceSaving(false)
+      return
+    } finally {
+      setVoiceSaving(false)
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-blue-50 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-blue-50 flex items-center justify-center px-4 py-8 overflow-hidden">
       {/* Language Toggle */}
       <div className="absolute top-4 right-4 z-50">
         <LanguageToggle />
       </div>
 
-      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full border border-gray-100">
-        <Link to="/" className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-6">
-          <ArrowLeft size={20} />
-          {t('backToHome')}
-        </Link>
+      {step !== 'voice' && (
+        <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full border border-gray-100">
+          <Link to="/" className="flex items-center gap-2 text-emerald-600 hover:text-emerald-700 mb-6">
+            <ArrowLeft size={20} />
+            {t('backToHome')}
+          </Link>
 
-        {/* Step 1: Enter Shop ID */}
-        {step === 'shopId' && (
+          {/* Step 1: Enter Shop ID */}
+          {step === 'shopId' && (
           <>
             <h1 className="text-3xl font-bold text-gray-800 mb-2">{t('welcomeBack')}</h1>
             <p className="text-gray-600 mb-6">{t('enterShopId')}</p>
@@ -205,16 +203,16 @@ const Login = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-bold py-4 rounded-xl hover:shadow-lg transition text-lg disabled:opacity-50"
+                className="w-full bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-bold py-4 rounded-full hover:shadow-lg transition text-lg disabled:opacity-50"
               >
                 {loading ? t('checking') : `${t('continue')} →`}
               </button>
             </form>
-          </>
-        )}
+            </>
+          )}
 
         {/* Step 2: Select Role */}
-        {step === 'role' && shopInfo && (
+          {step === 'role' && shopInfo && (
           <>
             <div className="flex items-center gap-3 mb-6 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
               <Store className="text-emerald-600" size={32} />
@@ -273,7 +271,7 @@ const Login = () => {
         )}
 
         {/* Step 2.5: Select Name (when multiple alternative shopkeepers) */}
-        {step === 'selectName' && alternativeShopkeepers.length > 0 && (
+          {step === 'selectName' && alternativeShopkeepers.length > 0 && (
           <>
             <div className="flex items-center gap-3 mb-6 p-4 bg-blue-50 rounded-xl border border-blue-100">
               <User className="text-blue-600" size={32} />
@@ -283,8 +281,8 @@ const Login = () => {
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('selectYourName') || 'Select Your Name'}</h2>
-            <p className="text-gray-600 mb-6">{t('multipleShopkeepersFound') || 'Multiple shopkeepers found. Please select your name.'}</p>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">{t('selectYourName')}</h2>
+            <p className="text-gray-600 mb-6">{t('multipleShopkeepersFound')}</p>
 
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
@@ -319,7 +317,7 @@ const Login = () => {
         )}
 
         {/* Step 3: Enter PIN */}
-        {step === 'pin' && shopkeeperInfo && (
+          {step === 'pin' && shopkeeperInfo && (
           <>
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-gradient-to-br from-emerald-100 to-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -329,7 +327,7 @@ const Login = () => {
                   <User className="text-blue-600" size={32} />
                 )}
               </div>
-              <h2 className="text-2xl font-bold text-gray-800">Hi, {shopkeeperInfo.name}!</h2>
+              <h2 className="text-2xl font-bold text-gray-800">{t('hiName', { name: shopkeeperInfo.name })}</h2>
               <p className="text-gray-600">{t('enterPin')}</p>
             </div>
 
@@ -362,19 +360,25 @@ const Login = () => {
           </>
         )}
 
-        <p className="text-center text-gray-600 mt-6">
-          {t('newHere')} <Link to="/register-shop" className="text-emerald-600 hover:text-emerald-700 font-semibold">{t('registerAShop')}</Link>
-        </p>
-      </div>
-
-      {/* Voice Enrollment Modal */}
-      {step === 'voiceEnroll' && (
-        <VoiceEnrollment
-          dailyCode={dailyCode}
-          onEnrollmentComplete={handleVoiceEnrollmentComplete}
-          onSkip={handleVoiceEnrollmentSkip}
-        />
+          <p className="text-center text-gray-600 mt-6">
+            {t('newHere')} <Link to="/register-shop" className="text-emerald-600 hover:text-emerald-700 font-semibold">{t('registerAShop')}</Link>
+          </p>
+        </div>
       )}
+      {step === 'voice' && pendingAuth && (
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full border border-gray-100">
+          <VoiceEnrollment
+            mode={voiceMode}
+            storedSignature={voiceSignature}
+            code={dailyVoiceCode}
+            onSuccess={handleVoiceSuccess}
+          />
+          {voiceSaving && (
+            <p className="text-center text-emerald-600 font-medium mt-4">{t('voiceSaving')}</p>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }

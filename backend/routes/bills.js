@@ -23,7 +23,7 @@ router.post('/', async (req, res) => {
 
     const { data: products, error: productsError } = await supabase
       .from('products')
-      .select('id, name, quantity')
+      .select('id, name, quantity, brand')
       .eq('shop_id', normalizedShopId)
       .in('id', productIds);
 
@@ -84,6 +84,7 @@ router.post('/', async (req, res) => {
           lowStockAlerts.push({
             productId: product.id,
             productName: product.name,
+            productBrand: product.brand || null,
             remainingQuantity: newQty
           });
         }

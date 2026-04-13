@@ -16,14 +16,27 @@ export const AuthProvider = ({ children }) => {
     }
   }, [auth])
 
-  const login = (shopId, shopName, name, role, token, shopkeeperId = null) => {
+  const login = (shopId, shopName, name, role, token, shopkeeperId = null, options = {}) => {
+    let resolvedShopkeeperId = shopkeeperId
+    let resolvedOptions = options
+
+    if (shopkeeperId && typeof shopkeeperId === 'object') {
+      resolvedOptions = shopkeeperId
+      resolvedShopkeeperId = null
+    }
+
+    const { voiceSignature = null, voiceEnrolledAt = null } = resolvedOptions || {}
     const authData = { 
       shopId, 
       shopName, 
       name, 
       role, 
       token, 
-      shopkeeperId,
+      shopkeeperId: resolvedShopkeeperId,
+      voiceSignature,
+      voiceEnrolledAt,
+      voiceVerifiedAt: null,
+      voiceVerifiedDate: null,
       loginTime: new Date().toISOString(),
       loginDate: new Date().toDateString()
     }
@@ -39,6 +52,20 @@ export const AuthProvider = ({ children }) => {
     setAuth(prev => ({ ...prev, ...data }))
   }
 
+  const markVoiceVerified = () => {
+    const now = new Date()
+    setAuth(prev => ({
+      ...prev,
+      voiceVerifiedAt: now.toISOString(),
+      voiceVerifiedDate: now.toDateString()
+    }))
+  }
+
+  const isVoiceVerifiedForSession = () => {
+    if (!auth?.voiceVerifiedAt || !auth?.loginTime) return false
+    return new Date(auth.voiceVerifiedAt).getTime() >= new Date(auth.loginTime).getTime()
+  }
+
   // Check if voice was enrolled today
   const isVoiceEnrolledToday = () => {
     if (!auth?.loginDate) return false
@@ -46,7 +73,7 @@ export const AuthProvider = ({ children }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ auth, login, logout, updateAuth, isVoiceEnrolledToday }}>
+    <AuthContext.Provider value={{ auth, login, logout, updateAuth, isVoiceEnrolledToday, markVoiceVerified, isVoiceVerifiedForSession }}>
       {children}
     </AuthContext.Provider>
   )

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS products (
   quantity DECIMAL,
   price DECIMAL NOT NULL,
   brand TEXT,
+  expiry_date DATE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -88,3 +89,4 @@ CREATE POLICY "Allow all operations on daily_codes" ON daily_codes FOR ALL USING
 -- Run this if table already exists:
 -- ALTER TABLE shopkeepers ADD COLUMN IF NOT EXISTS voice_signature TEXT;
 -- ALTER TABLE shopkeepers ADD COLUMN IF NOT EXISTS voice_enrolled_at TIMESTAMP WITH TIME ZONE;
+-- ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date DATE;

@@ -1,15 +1,14 @@
 # Smart Billing System
 
-A voice-enabled smart billing system with multi-factor authentication (PIN + voice pitch verification), voice-to-text product management, and daily rotating security codes.
+A voice-enabled smart billing system with PIN authentication and voice recognition for billing and product management.
 
 ## Features
 
 - 🏪 **Shop Registration** - Register a shop and get a unique Shop ID
 - 👤 **Role-Based Access** - Main shopkeeper and alternative shopkeeper roles
-- 🔐 **Multi-Factor Authentication** - PIN + Voice pitch verification
-- 🎤 **Voice-to-Text Product Entry** - Add products using voice (powered by OpenAI Whisper)
-- 📅 **Daily Rotating Codes** - 24-hour security codes for additional verification
-- 🧾 **Billing System** - Create bills with dual verification
+- 🔐 **PIN Authentication** - Login with Shop ID, role, and PIN
+- 🎤 **Voice Product Upsert** - Add/update products by voice with simple logic
+- 🧾 **Voice Billing** - Add items to bill using voice commands
 - 🔊 **Synonym Support** - Products can be found by alternative names
 
 ## Tech Stack
@@ -17,25 +16,18 @@ A voice-enabled smart billing system with multi-factor authentication (PIN + voi
 - **Frontend:** React.js + Vite + TailwindCSS
 - **Backend:** Node.js + Express.js
 - **Database:** SQLite (better-sqlite3)
-- **AI/Voice:** OpenAI Whisper API for speech-to-text
-- **Authentication:** JWT + PIN + Voice pitch verification
+- **AI/Voice:** Browser Web Speech API + server-side text parsing
+- **Authentication:** JWT + PIN
 
 ## Quick Start
 
 ### Prerequisites
 - Node.js 18+ installed
 - PowerShell 7+ (for Windows)
-- OpenAI API key (for voice features)
 
 ### Setup
 
-1. **Configure OpenAI API Key** (for voice features):
-   ```bash
-   cd backend
-   # Edit .env file and add your OpenAI API key
-   ```
-
-2. **Start both servers**:
+1. **Start both servers**:
    ```powershell
    .\start.ps1
    ```
@@ -51,7 +43,7 @@ A voice-enabled smart billing system with multi-factor authentication (PIN + voi
    npm run dev
    ```
 
-3. **Open the app**: http://localhost:5173
+2. **Open the app**: http://localhost:5173
 
 ## Usage Flow
 
@@ -70,21 +62,22 @@ A voice-enabled smart billing system with multi-factor authentication (PIN + voi
 - Enter your PIN
 
 ### 4. Dashboard
-- View the daily rotating code
 - Access Products (Main shopkeeper only)
 - Access Billing
 
 ### 5. Add Products (Voice)
 - Click "Add Product"
-- Use the voice recording feature
-- Speak: "Rice, 50 rupees, Basmati brand"
-- The form auto-fills with transcribed data
+- Speak examples:
+  - "tomato 10kg 50rs" → add if missing, else add qty + set price
+  - "tomato 20kg" → add qty to existing, else create with qty
+  - "tomato 45rs" → update price, else create with price
+- Matching is product + brand aware when brand is spoken
 
 ### 6. Create Bills
 - Select products from the list
 - Adjust quantities
-- Complete voice verification
-- Bill is saved with dual verification
+- Voice commands continue to work throughout billing
+- Bill is saved
 
 ## API Endpoints
 
@@ -96,8 +89,6 @@ A voice-enabled smart billing system with multi-factor authentication (PIN + voi
 - `POST /api/shopkeepers/register` - Register shopkeeper
 - `POST /api/shopkeepers/get-by-shop` - Get shopkeeper by shop and role
 - `POST /api/shopkeepers/verify-pin` - Verify PIN and get token
-- `POST /api/shopkeepers/save-pitch` - Save voice pitch signature
-- `POST /api/shopkeepers/verify-pitch` - Verify voice pitch
 
 ### Products
 - `POST /api/products` - Add product
@@ -111,13 +102,8 @@ A voice-enabled smart billing system with multi-factor authentication (PIN + voi
 - `GET /api/bills/:shop_id/:bill_id` - Get specific bill
 
 ### Voice
-- `POST /api/voice/transcribe` - Transcribe audio to text
-- `POST /api/voice/transcribe-product` - Transcribe and parse product info
-- `POST /api/voice/update-price` - Transcribe price update
-
-### Daily Codes
-- `GET /api/daily-codes/:shop_id` - Get/generate daily code
-- `POST /api/daily-codes/verify` - Verify daily code
+- `POST /api/voice/parse-product` - Parse product text to name/qty/price
+- `GET /api/voice/status` - Voice parser status
 
 ## Project Structure
 
@@ -134,8 +120,7 @@ smart billing/
 │   │   ├── shopkeepers.js # Shopkeeper endpoints
 │   │   ├── products.js    # Product endpoints
 │   │   ├── bills.js       # Billing endpoints
-│   │   ├── voice.js       # Voice/Whisper endpoints
-│   │   └── dailyCodes.js  # Daily code endpoints
+│   │   └── voice.js       # Voice parsing endpoints
 │   └── .env               # Environment variables
 ├── frontend/
 │   ├── src/
@@ -155,16 +140,13 @@ Backend `.env`:
 PORT=5000
 NODE_ENV=development
 JWT_SECRET=your-secret-key
-OPENAI_API_KEY=your-openai-api-key
 ```
 
 ## Security Features
 
 1. **PIN Authentication** - 4-digit PIN with bcrypt hashing
-2. **Voice Pitch Verification** - Biometric voice frequency matching
-3. **Daily Rotating Codes** - Codes change every 24 hours
-4. **JWT Tokens** - Secure API authentication
-5. **Role-Based Access** - Main vs Alternative shopkeeper permissions
+2. **JWT Tokens** - Secure API authentication
+3. **Role-Based Access** - Main vs Alternative shopkeeper permissions
 
 ## License
 
