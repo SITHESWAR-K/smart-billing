@@ -1,10 +1,14 @@
 import { useAuth } from '../context/AuthContext'
 import { useLanguage } from '../context/LanguageContext'
 import VoiceEnrollment from './VoiceEnrollment'
+import { getDailyVoiceCode } from '../utils/voiceSignature'
 
 const VoiceVerifyModal = ({ open, onSuccess, onCancel, threshold = 0.3 }) => {
   const { auth, markVoiceVerified } = useAuth()
   const { t } = useLanguage()
+  const dailyCode = auth?.shopId && auth?.shopkeeperId
+    ? getDailyVoiceCode(`${auth.shopId}-${auth.shopkeeperId}`)
+    : ''
 
   if (!open) return null
 
@@ -15,6 +19,7 @@ const VoiceVerifyModal = ({ open, onSuccess, onCancel, threshold = 0.3 }) => {
           mode="verify"
           storedSignature={auth?.voiceSignature}
           threshold={threshold}
+          code={dailyCode}
           onSuccess={() => {
             markVoiceVerified()
             onSuccess?.()

@@ -20,6 +20,23 @@ const normalizeVoiceText = (value = '') => value
   .replace(/\s+/g, ' ')
   .trim()
 
+const mapTamilNumbersToDigits = (value = '') => {
+  return (value || '')
+    .replace(/\u0B92\u0BB0\u0BC1/g, '1')
+    .replace(/\u0B92\u0BA9\u0BCD\u0BA9\u0BC1/g, '1')
+    .replace(/\u0B87\u0BB0\u0BA3\u0BCD\u0B9F\u0BC1/g, '2')
+    .replace(/\u0BB0\u0BC6\u0BA3\u0BCD\u0B9F\u0BC1/g, '2')
+    .replace(/\u0BAE\u0BC2\u0BA9\u0BC1/g, '3')
+    .replace(/\u0BAE\u0BC2\u0BA9\u0BCD\u0BB1\u0BC1/g, '3')
+    .replace(/\u0BA8\u0BBE\u0BB2\u0BC1/g, '4')
+    .replace(/\u0B85\u0B9E\u0BCD\u0B9A\u0BC1/g, '5')
+    .replace(/\u0B86\u0BB1\u0BC1/g, '6')
+    .replace(/\u0B8F\u0BB4\u0BC1/g, '7')
+    .replace(/\u0B8E\u0B9F\u0BCD\u0B9F\u0BC1/g, '8')
+    .replace(/\u0B92\u0BAE\u0BCD\u0BAA\u0BA4\u0BC1/g, '9')
+    .replace(/\u0BAA\u0BA4\u0BCD\u0BA4\u0BC1/g, '10')
+}
+
 const NUMBER_WORDS = {
   // English
   one: 1, two: 2, three: 3, four: 4, five: 5,
@@ -93,6 +110,10 @@ const Billing = () => {
   const silenceTimerRef = useRef(null)
   const restartTimerRef = useRef(null)
   const lastSpokenTextRef = useRef('')
+  const pendingSegmentsRef = useRef([])
+  const isProcessingRef = useRef(false)
+  const lastEnqueuedRef = useRef('')
+  const lastEnqueuedAtRef = useRef(0)
   const shouldRestartRef = useRef(false)
   const lastRestartAtRef = useRef(0)
   const restartBurstCountRef = useRef(0)
@@ -283,7 +304,7 @@ const Billing = () => {
 
   // Extract quantity from speech - improved patterns
   const extractQuantity = (text) => {
-    const workText = (text || '').trim()
+    const workText = mapTamilNumbersToDigits(text || '').trim()
     if (!workText) return { quantity: 1, isExplicit: false }
 
     const lowerText = workText.toLowerCase()
@@ -291,6 +312,12 @@ const Billing = () => {
     const qtyLabelMatch = lowerText.match(/\b(?:qty|quantity)\s*(?:is\s*)?(\d+(?:\.\d+)?)/i)
     if (qtyLabelMatch) {
       const qty = Number.parseFloat(qtyLabelMatch[1])
+      if (Number.isFinite(qty) && qty > 0 && qty < 1000) return { quantity: qty, isExplicit: true }
+    }
+
+    const qtyTrailingMatch = lowerText.match(/(\d+(?:\.\d+)?)\s*(?:qty|quantity|nos?|numbers?)/i)
+    if (qtyTrailingMatch) {
+      const qty = Number.parseFloat(qtyTrailingMatch[1])
       if (Number.isFinite(qty) && qty > 0 && qty < 1000) return { quantity: qty, isExplicit: true }
     }
 
@@ -324,6 +351,12 @@ const Billing = () => {
     return { quantity: 1, isExplicit: false }
   }
 
+  const hasExplicitQuantity = (text) => extractQuantity(text).isExplicit
+  const isControlCommand = (text = '') => {
+    const normalized = normalizeVoiceText(translateToEnglish(mapTamilNumbersToDigits(text)))
+    return /\b(clear|reset)\s+bill\b/i.test(normalized) || /\b(remove|delete)\b/i.test(normalized)
+  }
+
   const handleAddProduct = (product, quantity = 1) => {
     const added = addOrUpdateBillItem(product, quantity)
     if (!added) return
@@ -331,6 +364,30 @@ const Billing = () => {
     // Show feedback
     setLastAddedProduct({ name: product.name, brand: product.brand })
     setTimeout(() => setLastAddedProduct(null), 2000)
+  }
+
+  const enqueueVoiceSegment = (text, options = {}) => {
+    const { requireQuantity = false } = options
+    const normalized = normalizeVoiceText(translateToEnglish(mapTamilNumbersToDigits(text || '')))
+    if (!normalized) return
+    if (requireQuantity && !hasExplicitQuantity(text) && !isControlCommand(text)) return
+    const now = Date.now()
+    const isDuplicate = normalized === lastEnqueuedRef.current && (now - lastEnqueuedAtRef.current) < 2000
+    if (isDuplicate) return
+    lastEnqueuedRef.current = normalized
+    lastEnqueuedAtRef.current = now
+    pendingSegmentsRef.current.push(text)
+    processVoiceQueue()
+  }
+
+  const processVoiceQueue = async () => {
+    if (isProcessingRef.current) return
+    isProcessingRef.current = true
+    while (pendingSegmentsRef.current.length > 0) {
+      const segment = pendingSegmentsRef.current.shift()
+      await processVoiceBilling(segment)
+    }
+    isProcessingRef.current = false
   }
 
   const startVoiceBillingInternal = async () => {
@@ -342,6 +399,10 @@ const Billing = () => {
       shouldRestartRef.current = true
       restartBurstCountRef.current = 0
       lastRestartAtRef.current = Date.now()
+      lastEnqueuedRef.current = ''
+      lastEnqueuedAtRef.current = 0
+      pendingSegmentsRef.current = []
+      isProcessingRef.current = false
       setVoiceStatus(t('listening'))
       lastSpokenTextRef.current = ''
 
@@ -361,21 +422,34 @@ const Billing = () => {
             silenceTimerRef.current = null
           }
 
-          if (result.isFinal && result.final.trim()) {
-            const spokenText = translateToEnglish(result.final.trim())
-            lastSpokenTextRef.current = spokenText
-            setVoiceStatus(t('voiceHeard', { text: spokenText }))
+          const finalText = (result.final || '').trim()
+          const interimText = (result.interim || '').trim()
+          const rawText = finalText || interimText
+          if (!rawText) return
 
-            // Process after 1 second pause
-            silenceTimerRef.current = setTimeout(async () => {
-              if (lastSpokenTextRef.current) {
-                const pendingText = lastSpokenTextRef.current
-                lastSpokenTextRef.current = ''
-                console.log('Processing billing:', pendingText)
-                await processVoiceBilling(pendingText)
-              }
-            }, 1000)
+          setVoiceStatus(t('voiceHeard', { text: rawText }))
+
+          if (result.isFinal && finalText) {
+            if (silenceTimerRef.current) {
+              clearTimeout(silenceTimerRef.current)
+              silenceTimerRef.current = null
+            }
+            lastSpokenTextRef.current = ''
+            console.log('Queue billing (final):', finalText)
+            enqueueVoiceSegment(finalText)
+            return
           }
+
+          lastSpokenTextRef.current = interimText
+
+          // Process after a short pause (handles interim-only on mobile too).
+          silenceTimerRef.current = setTimeout(() => {
+            if (!lastSpokenTextRef.current) return
+            const pendingText = lastSpokenTextRef.current
+            lastSpokenTextRef.current = ''
+            console.log('Queue billing (pause):', pendingText)
+            enqueueVoiceSegment(pendingText, { requireQuantity: true })
+          }, 900)
         },
         onError: (err) => {
           console.error('Billing speech error:', err)
@@ -401,6 +475,12 @@ const Billing = () => {
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current)
             silenceTimerRef.current = null
+          }
+
+          if (lastSpokenTextRef.current) {
+            const pendingText = lastSpokenTextRef.current
+            lastSpokenTextRef.current = ''
+            enqueueVoiceSegment(pendingText, { requireQuantity: true })
           }
         },
         onEnd: () => {
@@ -479,8 +559,8 @@ const Billing = () => {
   }
 
   const processSingleVoiceSegment = async (segment) => {
-    const normalized = normalizeVoiceText(segment)
-    if (!normalized) return { matched: false }
+    const normalized = normalizeVoiceText(translateToEnglish(mapTamilNumbersToDigits(segment || '')))
+    if (!normalized && !(segment || '').trim()) return { matched: false }
 
     if (/\b(clear|reset)\s+bill\b/i.test(normalized)) {
       setBillItems([])
@@ -581,6 +661,10 @@ const Billing = () => {
     shouldRestartRef.current = false
     listeningRef.current = false
     lastSpokenTextRef.current = ''
+    lastEnqueuedRef.current = ''
+    lastEnqueuedAtRef.current = 0
+    pendingSegmentsRef.current = []
+    isProcessingRef.current = false
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = null
